@@ -160,6 +160,7 @@ export class StreamingVoicePlayer {
   private currentSource: { stop(): void } | undefined = undefined
   private doneResolvers: Array<() => void> = []
   private finishedInternal = false
+  private inputFinished = false
 
   /** Kick off async decode; playback runs strictly in chunk order. */
   pushBlob(blob: Blob): void {
@@ -182,6 +183,12 @@ export class StreamingVoicePlayer {
   finished(): Promise<void> {
     if (this.finishedInternal) return Promise.resolve()
     return new Promise<void>((resolve) => { this.doneResolvers.push(resolve) })
+  }
+
+  /** Mark the streamed TTS input complete so an empty/failed stream cannot hang playback. */
+  finishInput(): void {
+    this.inputFinished = true
+    this.maybeFinish()
   }
 
   /** Stop playback immediately and drop any pending chunks. */
@@ -209,7 +216,7 @@ export class StreamingVoicePlayer {
 
   private maybeFinish(): void {
     if (this.finishedInternal) return
-    if (this.pending.size !== 0 || this.draining || this.playSeq < this.pushSeq) return
+    if (!this.inputFinished || this.pending.size !== 0 || this.draining || this.playSeq < this.pushSeq) return
     this.resolveFinished()
   }
 
@@ -267,7 +274,9 @@ export async function streamVoice(
   config: VoiceState,
   text: string,
   onChunk: (blob: Blob) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
+  if (signal?.aborted) throw new DOMException('aborted', 'AbortError')
   if (config.provider === "openai") {
     onChunk(await synthesizeVoice(config, text))
     return
@@ -279,6 +288,7 @@ export async function streamVoice(
     response = await fetch(`${endpoint}/api/v1/tts/stream`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      ...(signal !== undefined ? { signal } : {}),
       body: JSON.stringify({
         text,
         voice: config.voice || VOICE_DEFAULT_VOICE,

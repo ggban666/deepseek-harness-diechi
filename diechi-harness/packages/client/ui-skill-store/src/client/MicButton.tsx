@@ -56,7 +56,10 @@ export function MicButton({ t, useVoice, useInput, inputActions, transcribeAudio
   const stopRecording = (): void => {
     const recorder = recorderRef.current
     if (recorder !== undefined && recorder.state !== 'inactive') {
-      try { recorder.stop() } catch { /* already stopped */ }
+      try {
+        recorder.requestData()
+        recorder.stop()
+      } catch { /* already stopped */ }
     }
   }
 

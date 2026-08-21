@@ -58,6 +58,11 @@ export type {
 export type { VisionSectionInjected, VisionState } from './VisionSection.tsx'
 export type { VoiceState } from './voice.ts'
 export type { VoiceSectionInjected } from './VoiceSection.tsx'
+export type {
+  CompanionAudioRoute, CompanionDevice, CompanionMessage, CompanionTransport,
+  BluetoothCompanionTransport, CompanionDeviceKind, CompanionTransportKind,
+} from './device-transport.ts'
+export { BrowserAudioTransport } from './device-transport.ts'
 export type { VoiceReplyInjected } from './VoiceReplyActions.tsx'
 export type {
   SkillManifestEntry, SkillMarketSettings, SkillMarketSkill, SkillStoreSettings, SkillManifestRevision,
@@ -137,9 +142,12 @@ class SkillStoreController {
   private readonly vision: SnapshotStore<VisionState>
   private readonly voice: SnapshotStore<VoiceState>
   private readonly market: SnapshotStore<MarketState>
+  private visionSessionId: string
+  private visionTurnAbort: AbortController | undefined
   private readonly center: SnapshotStore<SkillCenterState>
   private readonly training: SnapshotStore<TrainingState>
   private voicePlayer: StreamingVoicePlayer | undefined = undefined
+  private voiceAbort: AbortController | undefined = undefined
 
   /**
    * @param storeScope - bound scope for the `skill.store` catalog.
@@ -161,6 +169,8 @@ class SkillStoreController {
   ) {
     this.store = createSnapshotStore<SkillStoreState>({ skills: [], writable: false })
     this.vision = createSnapshotStore<VisionState>({ enabled: false, endpoint: VISION_DEFAULT_ENDPOINT, model: VISION_DEFAULT_MODEL, intervalSec: 5, voiceChat: false, chatIntervalSec: 0 })
+    this.visionSessionId = ''
+    this.visionTurnAbort = undefined
     this.voice = createSnapshotStore<VoiceState>({
       enabled: false,
       autoSpeak: false,
@@ -507,13 +517,15 @@ class SkillStoreController {
    * @returns the transcript, or undefined when the service failed.
    */
   async transcribeMic(blob: Blob): Promise<string | undefined> {
-    const config = this.voiceScope.getSnapshot().value
-    const endpoint = config?.endpoint || VOICE_DEFAULT_ENDPOINT
-    return asrTranscribe(endpoint, blob)
+    // ASR is provided by the local vision service, independently of the TTS
+    // provider URL selected in voice settings.
+    return asrTranscribe(VOICE_DEFAULT_ENDPOINT, blob)
   }
 
   /** Stop the currently playing voice line and release its audio context. */
   stopSpeaking(): void {
+    this.voiceAbort?.abort()
+    this.voiceAbort = undefined
     this.voicePlayer?.stop()
     this.voicePlayer = undefined
   }
@@ -536,11 +548,16 @@ class SkillStoreController {
     this.stopSpeaking()
     const player = new StreamingVoicePlayer()
     this.voicePlayer = player
+    const abort = new AbortController()
+    this.voiceAbort = abort
     try {
-      await streamVoice(useConfig, trimmed, (blob) => { void player.pushBlob(blob) })
+      await streamVoice(useConfig, trimmed, (blob) => { void player.pushBlob(blob) }, abort.signal)
+      player.finishInput()
       await player.finished()
       return true
     } catch (error) {
+      player.finishInput()
+      if (abort.signal.aborted) return false
       console.error('[voice] speak failed:', error)
       this.stopSpeaking()
       return false
@@ -633,9 +650,10 @@ class SkillStoreController {
       if (!content) return { ok: false, error: 'vision-empty' }
       const transcript = payload.transcript?.trim() || undefined
       const draft = parseSkillDraft(content)
+      const transcriptExtra = transcript !== undefined ? { transcript } : {}
       return draft === undefined
-        ? { ok: true, notice: content, transcript }
-        : { ok: true, notice: content, draft, transcript }
+        ? { ok: true, notice: content, ...transcriptExtra }
+        : { ok: true, notice: content, draft, ...transcriptExtra }
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
         return { ok: false, error: 'vision-timeout' }
@@ -750,6 +768,138 @@ class SkillStoreController {
   }
 
   /**
+   * Server-side camera chat session: create, close, and interrupt helpers.
+   * The session keeps a frame ring buffer + text history so every turn sees
+   * the recent N frames (multi-frame context), not just the current one.
+   */
+  async startVisionSession(): Promise<string | undefined> {
+    const config = this.visionScope.getSnapshot().value
+    if (config?.enabled !== true) return undefined
+    const endpoint = (config.endpoint || VISION_DEFAULT_ENDPOINT).replace(/\/+$/, '')
+    try {
+      const response = await fetch(`${endpoint}/api/v1/vision/session`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      })
+      if (!response.ok) return undefined
+      const payload = await response.json() as { session_id?: string }
+      return payload.session_id
+    } catch {
+      return undefined
+    }
+  }
+
+  async endVisionSession(sid: string): Promise<void> {
+    if (!sid) return
+    const config = this.visionScope.getSnapshot().value
+    const endpoint = (config?.endpoint || VISION_DEFAULT_ENDPOINT).replace(/\/+$/, '')
+    try {
+      await fetch(`${endpoint}/api/v1/vision/session/${encodeURIComponent(sid)}`, { method: 'DELETE' })
+    } catch { /* ignore */ }
+  }
+
+  async interruptVision(sid: string): Promise<void> {
+    if (!sid) return
+    const config = this.visionScope.getSnapshot().value
+    const endpoint = (config?.endpoint || VISION_DEFAULT_ENDPOINT).replace(/\/+$/, '')
+    try {
+      await fetch(`${endpoint}/api/v1/vision/session/${encodeURIComponent(sid)}/interrupt`, { method: 'POST' })
+    } catch { /* ignore */ }
+  }
+
+  /**
+   * One streaming vision turn against the session. Frames accumulate on the
+   * server; `text` is stored as a user turn. onDelta fires per token chunk.
+   * Returns the full reply (possibly truncated when aborted).
+   */
+  async visionStreamTurn(args: {
+    sid: string
+    frame?: string
+    text?: string
+    signal?: AbortSignal
+    onDelta?: (delta: string) => void
+  }): Promise<string> {
+    const { sid, frame = '', text = '', signal, onDelta } = args
+    const config = this.visionScope.getSnapshot().value
+    if (config?.enabled !== true) return ''
+    const endpoint = (config.endpoint || VISION_DEFAULT_ENDPOINT).replace(/\/+$/, '')
+    const controller = new AbortController()
+    const onOuterAbort = (): void => { controller.abort() }
+    signal?.addEventListener('abort', onOuterAbort, { once: true })
+    const timer = setTimeout(() => controller.abort(), 90_000)
+    let full = ''
+    try {
+      const response = await fetch(`${endpoint}/api/v1/vision/stream`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+        body: JSON.stringify({ session_id: sid, frame, text, max_tokens: 120, temperature: 0.4 }),
+      })
+      if (!response.ok || response.body === null) return ''
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder('utf-8')
+      let buffer = ''
+      for (;;) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        let idx = buffer.indexOf('\n\n')
+        while (idx >= 0) {
+          const block = buffer.slice(0, idx)
+          buffer = buffer.slice(idx + 2)
+          for (const line of block.split('\n')) {
+            if (!line.startsWith('data: ')) continue
+            try {
+              const ev = JSON.parse(line.slice(6)) as { type?: string; delta?: string }
+              if (ev.type === 'delta' && typeof ev.delta === 'string') {
+                full += ev.delta
+                onDelta?.(ev.delta)
+              }
+            } catch { /* skip malformed event */ }
+          }
+          idx = buffer.indexOf('\n\n')
+        }
+      }
+    } catch {
+      return full
+    } finally {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', onOuterAbort)
+    }
+    return full
+  }
+
+  async runLiveChatFrameStream(frame: string, text: string, onDelta: (delta: string) => void): Promise<string> {
+    const config = this.visionScope.getSnapshot().value
+    if (config?.enabled !== true) return ''
+    if (!this.visionSessionId) {
+      this.visionSessionId = (await this.startVisionSession()) ?? ''
+    }
+    const sid = this.visionSessionId
+    const controller = new AbortController()
+    this.visionTurnAbort = controller
+    try {
+      return await this.visionStreamTurn({ sid, frame, text, signal: controller.signal, onDelta })
+    } finally {
+      if (this.visionTurnAbort === controller) this.visionTurnAbort = undefined
+    }
+  }
+
+  async interruptVisionChat(): Promise<void> {
+    this.visionTurnAbort?.abort()
+    this.visionTurnAbort = undefined
+    if (this.visionSessionId) await this.interruptVision(this.visionSessionId)
+  }
+
+  async resetVisionSession(): Promise<void> {
+    this.visionTurnAbort?.abort()
+    this.visionTurnAbort = undefined
+    const sid = this.visionSessionId
+    this.visionSessionId = ''
+    if (sid) await this.endVisionSession(sid)
+  }
+
+  /**
    * Send one camera observation into the current conversation as context so
    * the text model can reply about what the camera sees.
    * @param context - the observation prompt (caption included).
@@ -773,9 +923,11 @@ class SkillStoreController {
         vision: this.vision as HostObservable<VisionState>,
       },
       runLiveChatFrame: (frame, history) => this.runLiveChatFrame(frame, history),
+      runLiveChatFrameStream: (frame, text, onDelta) => this.runLiveChatFrameStream(frame, text, onDelta),
+      interruptVisionChat: () => this.interruptVisionChat(),
+      resetVisionSession: () => this.resetVisionSession(),
       sendCameraObservation: (context) => this.sendCameraObservation(context),
       transcribeAudio: (blob) => this.transcribeMic(blob),
-      speak: (text) => this.speak(text),
       stopSpeaking: () => this.stopSpeaking(),
     }
   }

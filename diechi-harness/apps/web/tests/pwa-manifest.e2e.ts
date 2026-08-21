@@ -12,24 +12,30 @@ it('ships install metadata with the built web application', async () => {
   const manifest: unknown = JSON.parse(await readFile(join(DIST_ROOT, 'manifest.webmanifest'), 'utf8'))
   expect(manifest).toEqual({
     id: '/',
-    name: 'DeepSeek Harness',
-    short_name: 'DSH',
+    name: '蝶翅APP',
+    short_name: '蝶翅',
     start_url: '/',
     scope: '/',
     display: 'fullscreen',
+    background_color: '#f8fafc',
+    theme_color: '#6B46C1',
     icons: [{
-      src: '/favicon.svg',
-      sizes: 'any',
-      type: 'image/svg+xml',
+      src: '/favicon.png',
+      sizes: '512x512',
+      type: 'image/png',
       purpose: 'any',
+    }, {
+      src: '/apple-touch-icon.png',
+      sizes: '180x180',
+      type: 'image/png',
+      purpose: 'any maskable',
     }],
   })
 })
 
-it('ships a favicon that switches to a light mark under dark color scheme', async () => {
-  const favicon = await readFile(join(DIST_ROOT, 'favicon.svg'), 'utf8')
-  // The light fill must live inside the dark-scheme media query, so the icon
-  // stays black in light mode and only turns white under a dark scheme.
-  expect(favicon).toMatch(/@media \(prefers-color-scheme: dark\)\s*{\s*path\s*{[^}]*fill:\s*#fff/i)
-  expect(favicon).toContain('fill="#000"')
+it('ships the branded butterfly icon assets', async () => {
+  const favicon = await readFile(join(DIST_ROOT, 'favicon.png'))
+  const touchIcon = await readFile(join(DIST_ROOT, 'apple-touch-icon.png'))
+  expect(favicon.byteLength).toBeGreaterThan(1000)
+  expect(touchIcon.byteLength).toBeGreaterThan(1000)
 })

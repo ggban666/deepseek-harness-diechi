@@ -20,7 +20,7 @@ export type SkillStoreKey =
   | 'recognizeVideo' | 'videoUpload' | 'videoCamera'
   | 'cameraTitle' | 'cameraHint' | 'cameraPause' | 'cameraResume' | 'cameraUse' | 'cameraCancel'
   | 'cameraUnsupported' | 'cameraDenied'
-  | 'cameraRecording' | 'cameraPaused' | 'cameraMicHint' | 'cameraNoMicHint'
+  | 'cameraRecording' | 'cameraPaused' | 'cameraMicHint' | 'cameraNoMicHint' | 'liveDescribe'
   | 'videoTranscript'
   | 'visionDisabled' | 'visionEndpointMissing' | 'visionTimeout' | 'visionEmpty' | 'visionFailed'
   | 'voiceNav' | 'voiceTitle' | 'voiceHint' | 'voiceEnabled' | 'voiceAuto'

@@ -294,7 +294,7 @@ export function VisionSection({
   }
 
   const completeRecording = async (): Promise<void> => {
-    setCamera({ status: 'idle', seconds: 0 })
+    setCamera(state => ({ ...state, status: 'idle', seconds: 0 }))
     if (discardRef.current) {
       discardRef.current = false
       chunksRef.current = []
@@ -319,7 +319,7 @@ export function VisionSection({
   const cancelCamera = (): void => {
     discardRef.current = true
     closeCamera()
-    setCamera({ status: 'idle', seconds: 0 })
+    setCamera(state => ({ ...state, status: 'idle', seconds: 0 }))
     setLiveNotes([])
   }
 

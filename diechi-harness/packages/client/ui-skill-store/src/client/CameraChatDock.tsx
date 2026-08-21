@@ -34,12 +34,16 @@ export interface CameraChatDockInjected {
   }
   /** Describe one frame conversationally; returns a short caption. */
   runLiveChatFrame(frame: string, history: readonly CameraChatTurn[]): Promise<string | undefined>
+  /** Describe one live frame through a streaming server session. */
+  runLiveChatFrameStream(frame: string, text: string, onDelta: (delta: string) => void): Promise<string>
+  /** Cancel the in-flight vision turn (and the TTS voice line). */
+  interruptVisionChat(): Promise<void>
+  /** Close the server-side camera chat session. */
+  resetVisionSession(): Promise<void>
   /** Send the camera observation as context into the current conversation. */
   sendCameraObservation(context: string): Promise<boolean>
   /** Transcribe one recorded speech blob through the configured ASR service. */
   transcribeAudio(blob: Blob): Promise<string | undefined>
-  /** Speak one line with the configured TTS (voice-chat mode). */
-  speak(text: string): Promise<boolean>
   /** Stop the currently playing voice line. */
   stopSpeaking(): void
 }
@@ -64,14 +68,13 @@ const SPEECH_DEBOUNCE_FRAMES = 2
 const MAX_SEGMENT_MS = 15_000
 /** Silence (ms) that ends one spoken sentence. */
 const SILENCE_MS = 900
-/** Minimum time between voiced captions in continuous mode (ms). */
-const CAPTION_SPEAK_GAP_MS = 2500
-
 /** Render the camera chat toggle row, then the live preview + caption panel. */
 export function CameraChatDock({
-  t, useVision, runLiveChatFrame, sendCameraObservation, transcribeAudio, speak, stopSpeaking,
+  t, useVision, runLiveChatFrameStream, interruptVisionChat, resetVisionSession,
+  sendCameraObservation, transcribeAudio, stopSpeaking, useInput, inputActions,
 }: CameraChatDockProps) {
   const vision = useVision(value => value)
+  const draft = useInput(state => state.draft)
   const [active, setActive] = useState(false)
   const [starting, setStarting] = useState(false)
   const [sending, setSending] = useState(false)
@@ -110,8 +113,24 @@ export function CameraChatDock({
   const pendingSegmentRef = useRef<{ chunks: BlobPart[]; mime: string } | undefined>(undefined)
   /** True while the TTS reply is speaking (suppresses VAD echo). */
   const speakingRef = useRef(false)
+  /** True while a streaming vision turn is in flight (serializes turns). */
+  const streamBusyRef = useRef(false)
+  /** Accumulated caption for the in-flight streaming turn. */
+  const captionAccumRef = useRef('')
+  /** Set when the user barge-in cancelled the current turn (drop the half reply). */
+  const turnCanceledRef = useRef(false)
+  const draftRef = useRef(draft)
 
   useEffect(() => () => { stopCamera() }, [])
+  useEffect(() => { draftRef.current = draft }, [draft])
+
+  const appendTranscript = (text: string): void => {
+    const current = draftRef.current
+    const separator = current === '' || /\s$/.test(current) ? '' : ' '
+    const next = current + separator + text.trim()
+    draftRef.current = next
+    inputActions.setDraft(next)
+  }
 
   const stopCamera = (): void => {
     aliveRef.current = false
@@ -124,6 +143,7 @@ export function CameraChatDock({
       autoTimerRef.current = undefined
     }
     stopSpeaking()
+    void resetVisionSession()
     stopListening()
     streamRef.current?.getTracks().forEach(track => { track.stop() })
     streamRef.current = undefined
@@ -148,25 +168,35 @@ export function CameraChatDock({
     return canvas.toDataURL('image/jpeg', 0.7)
   }
 
+  /** Run one streaming vision turn against the server session. */
+  const streamTurn = async (frame: string | undefined, text: string): Promise<string> => {
+    if (frame === undefined || streamBusyRef.current) return ''
+    streamBusyRef.current = true
+    turnCanceledRef.current = false
+    captionAccumRef.current = ''
+    setCaption(text.trim() !== '' ? t('voiceChatThinking').replace('{text}', text.trim()) : t('cameraChatWaiting'))
+    try {
+      const full = await runLiveChatFrameStream(frame, text, (delta) => {
+        captionAccumRef.current += delta
+        setCaption(captionAccumRef.current)
+      })
+      // A barge-in cancelled this turn mid-generation: drop the half reply.
+      return turnCanceledRef.current ? '' : full
+    } finally {
+      streamBusyRef.current = false
+    }
+  }
+
   const tick = async (): Promise<void> => {
     if (!aliveRef.current) return
     const frame = captureFrame()
     if (frame === undefined) return
-    const reply = await runLiveChatFrame(frame, historyRef.current)
+    const reply = await streamTurn(frame, '')
     if (!aliveRef.current) return
     if (reply !== undefined && reply.trim() !== '') {
       historyRef.current = [...historyRef.current.slice(-(MAX_HISTORY - 2)), { role: 'assistant', content: reply }]
       captionRef.current = reply.trim()
       setCaption(reply.trim())
-      // Continuous mode: voice the caption too, unless the user is talking or
-      // the reply pipeline just spoke.
-      const continuous = vision.voiceChat === true
-      const recent = Date.now() - lastSpeakAtRef.current < CAPTION_SPEAK_GAP_MS
-      if (continuous && !recent && !vadBusyRef.current && !vadTalkingRef.current) {
-        lastSpeakAtRef.current = Date.now()
-        speakingRef.current = true
-        void speak(reply.trim()).finally(() => { speakingRef.current = false })
-      }
     }
   }
 
@@ -178,7 +208,7 @@ export function CameraChatDock({
       const frame = captureFrame()
       if (frame === undefined || !aliveRef.current) return
       setCaption(t('cameraChatWaiting'))
-      const reply = await runLiveChatFrame(frame, historyRef.current)
+      const reply = await streamTurn(frame, '')
       if (!aliveRef.current || reply === undefined || reply.trim() === '') return
       historyRef.current = [...historyRef.current.slice(-(MAX_HISTORY - 2)), { role: 'assistant', content: reply }]
       captionRef.current = reply.trim()
@@ -234,6 +264,7 @@ export function CameraChatDock({
         audio: false,
       })
       streamRef.current = stream
+      await resetVisionSession()
       aliveRef.current = true
       historyRef.current = []
       captionRef.current = ''
@@ -360,7 +391,7 @@ export function CameraChatDock({
     analyser.getByteTimeDomainData(samples)
     let sum = 0
     for (let i = 0; i < samples.length; i++) {
-      const v = (samples[i] - 128) / 128
+      const v = (samples[i]! - 128) / 128
       sum += v * v
     }
     const loud = Math.sqrt(sum / samples.length) > SPEECH_RMS
@@ -372,6 +403,8 @@ export function CameraChatDock({
         vadTalkingRef.current = true
         vadLoudStreakRef.current = 0
         stopSpeaking()
+        turnCanceledRef.current = true
+        void interruptVisionChat()
         setCaption(t('voiceChatHeard'))
         startSegmentRecorder()
       }
@@ -414,7 +447,10 @@ export function CameraChatDock({
     const recorder = segmentRecorderRef.current
     segmentRecorderRef.current = undefined
     if (recorder !== undefined && recorder.state !== 'inactive') {
-      try { recorder.stop() } catch { /* already stopped */ }
+      try {
+        recorder.requestData()
+        recorder.stop()
+      } catch { /* already stopped */ }
     }
   }
 
@@ -436,26 +472,8 @@ export function CameraChatDock({
         setError(t('voiceChatEmpty'))
         return
       }
-      const frame = captureFrame()
-      if (frame === undefined || !aliveRef.current) return
-      setCaption(t('voiceChatThinking').replace('{text}', text.trim()))
-      historyRef.current = [...historyRef.current.slice(-(MAX_HISTORY - 2)), { role: 'user', content: t('voiceChatUserPrefix').replace('{text}', text.trim()) }]
-      const reply = await runLiveChatFrame(frame, historyRef.current)
-      if (!aliveRef.current) return
-      if (reply !== undefined && reply.trim() !== '') {
-        historyRef.current = [...historyRef.current.slice(-(MAX_HISTORY - 2)), { role: 'assistant', content: reply.trim() }]
-        captionRef.current = reply.trim()
-        setCaption(reply.trim())
-        lastSpeakAtRef.current = Date.now()
-        speakingRef.current = true
-        try {
-          await speak(reply.trim())
-        } finally {
-          speakingRef.current = false
-        }
-      } else {
-        setError(t('voiceChatNoReply'))
-      }
+      appendTranscript(text)
+      setCaption(t('voiceChatUserPrefix').replace('{text}', text.trim()))
     } finally {
       vadBusyRef.current = false
       const pending = pendingSegmentRef.current
@@ -473,7 +491,10 @@ export function CameraChatDock({
   const stopMic = (): void => {
     const recorder = recorderRef.current
     if (recorder !== undefined && recorder.state !== 'inactive') {
-      try { recorder.stop() } catch { /* already stopped */ }
+      try {
+        recorder.requestData()
+        recorder.stop()
+      } catch { /* already stopped */ }
     }
   }
 
@@ -524,25 +545,8 @@ export function CameraChatDock({
         setError(t('voiceChatEmpty'))
         return
       }
-      const frame = captureFrame()
-      if (frame === undefined || !aliveRef.current) return
-      setCaption(t('voiceChatThinking').replace('{text}', text.trim()))
-      historyRef.current = [...historyRef.current.slice(-(MAX_HISTORY - 2)), { role: 'user', content: t('voiceChatUserPrefix').replace('{text}', text.trim()) }]
-      const reply = await runLiveChatFrame(frame, historyRef.current)
-      if (!aliveRef.current) return
-      if (reply !== undefined && reply.trim() !== '') {
-        historyRef.current = [...historyRef.current.slice(-(MAX_HISTORY - 2)), { role: 'assistant', content: reply.trim() }]
-        captionRef.current = reply.trim()
-        setCaption(reply.trim())
-        speakingRef.current = true
-        try {
-          await speak(reply.trim())
-        } finally {
-          speakingRef.current = false
-        }
-      } else {
-        setError(t('voiceChatNoReply'))
-      }
+      appendTranscript(text)
+      setCaption(t('voiceChatUserPrefix').replace('{text}', text.trim()))
     } finally {
       setMicBusy(false)
     }
