@@ -15,6 +15,7 @@
  */
 
 import { mkdirSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 
@@ -42,6 +43,12 @@ export interface PersonKnowledge {
   readonly tags: string
   /** 最近更新的 ISO 时间戳。 */
   readonly updatedAt: string
+}
+
+/** 蝶翅数据根目录：`$DSH_HOME`，未设置时回退 `~/.dsh`。 */
+export function dshHomeDir(): string {
+  const fromEnv = (process.env.DSH_HOME ?? '').trim()
+  return fromEnv !== '' ? fromEnv : join(homedir(), '.dsh')
 }
 
 /** 默认的 schema；CREATE IF NOT EXISTS，可安全重复执行。 */
@@ -93,6 +100,17 @@ export class PersonBrain {
       // 已存在（新库 CREATE 已含 tags），忽略。
     }
     return new PersonBrain(dir, db)
+  }
+
+  /**
+   * 打开全局大脑：蝶翅数据根目录（$DSH_HOME）下的 brain.db。
+   * 全局大脑承载用户跨人格共享的阅历（如视频实操 #实操），任何人格
+   * 勾选与否都能写入，勾选后可通过 recall 引用。
+   */
+  static openGlobal(): PersonBrain {
+    const home = dshHomeDir()
+    mkdirSync(home, { recursive: true })
+    return PersonBrain.open(home)
   }
 
   /** brain.db 的绝对路径（供展示/备份）。 */

@@ -654,16 +654,18 @@ class SkillStoreController {
       const process = payload.process?.trim() || undefined
       const draft = parseSkillDraft(content)
       const transcriptExtra = transcript !== undefined ? { transcript } : {}
-      // 视频实操过程发布到宿主：自动写入当前人格大脑（#实操 标签）。
+      // 视频实操过程发布到宿主：宿主先入库全局大脑（#实操 阅历），勾选人格时再同步。
       if (process !== undefined) {
         try {
+          console.log('[skill-store] videoProcess set start')
           await this.visionScope.set('videoProcess', {
             at: new Date().toISOString(),
             name: file.name,
             process,
           })
-        } catch {
-          // 入库失败不阻断识别结果展示。
+          console.log('[skill-store] videoProcess set ok')
+        } catch (error) {
+          console.error('[skill-store] videoProcess set failed', error)
         }
       }
       const processExtra = process !== undefined ? { process } : {}

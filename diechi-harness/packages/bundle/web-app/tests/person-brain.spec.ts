@@ -6,7 +6,7 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { PersonBrain } from '../src/person-brain.ts'
+import { dshHomeDir, PersonBrain } from '../src/person-brain.ts'
 
 const dirs: string[] = []
 
@@ -74,5 +74,27 @@ describe('PersonBrain', () => {
     brain.close()
     expect(() => brain.remember('x')).toThrow(/closed/)
     expect(() => brain.recall('x')).toThrow(/closed/)
+  })
+
+  it('openGlobal 落在 $DSH_HOME/brain.db，实操知识带标签', () => {
+    const home = mkdtempSync(join(tmpdir(), 'dsh-home-'))
+    dirs.push(home)
+    const prev = process.env.DSH_HOME
+    process.env.DSH_HOME = home
+    try {
+      expect(dshHomeDir()).toBe(home)
+      const brain = PersonBrain.openGlobal()
+      expect(brain.path).toBe(join(home, 'brain.db'))
+      expect(existsSync(brain.path)).toBe(true)
+      brain.learn('实操：手机贴膜', '第1步…第2步…', '实操')
+      const rows = brain.recallKnowledge('', '实操')
+      expect(rows.length).toBe(1)
+      expect(rows[0]?.tags).toContain('实操')
+      expect(rows[0]?.topic).toContain('手机贴膜')
+      brain.close()
+    } finally {
+      if (prev === undefined) delete process.env.DSH_HOME
+      else process.env.DSH_HOME = prev
+    }
   })
 })

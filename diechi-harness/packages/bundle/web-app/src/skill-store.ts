@@ -30,7 +30,7 @@ import type {} from '@deepseek-ai/dsh-skill'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
-import { PersonBrain, type PersonMemory } from './person-brain'
+import { dshHomeDir, PersonBrain, type PersonKnowledge, type PersonMemory } from './person-brain'
 
 /** Stable Cordis plugin name. */
 export const name = 'skill-store'
@@ -831,6 +831,14 @@ export function apply(ctx: Context): void {
   // 的人格持有大脑工具（避免重复注册冲突，也符合「一个完整的人」语义）。
   const registrations = new Map<string, () => void>()
   const brains = new Map<string, PersonBrain>()
+  /** 打开（必要时创建）全局大脑；插件内惰性使用。 */
+  const ensureGlobalBrain = (): PersonBrain => {
+    if (globalBrain === undefined) {
+      globalBrain = PersonBrain.openGlobal()
+      console.log('skill-store: 全局大脑已打开 →', globalBrain.path)
+    }
+    return globalBrain
+  }
   /** 已入库的视频实操（按 videoProcess.at 去重）。 */
   const ingestedVideos = new Set<string>()
   const personToolDisposers = new Map<string, () => void>()
@@ -932,22 +940,28 @@ export function apply(ctx: Context): void {
 
   // 视觉设置变化：镜像最新感知 → 重挂 see()/感知区块 → 重绘人格。
   vision.watch((next) => {
+    console.log('[skill-store] vision.watch fired; videoProcess=', next.videoProcess !== undefined)
     latestPerception = next.lastPerception
-    // 视频投喂的实操过程：写入当前 owner 大脑（knowledge + 实操标签），
-    // 同一视频（按 at 时间戳）只入库一次。
+    // 视频投喂的实操过程：先入库全局大脑（#实操 阅历），勾选人格时再
+    // 同步到该人格大脑；同一视频（按 at 时间戳）只入库一次。
     const pending = next.videoProcess
     if (pending !== undefined && pending.process.trim() !== '') {
       const key = 'video:' + pending.at
-      if (!ingestedVideos.has(key) && brainToolsOwner !== undefined) {
-        const brain = brains.get(brainToolsOwner)
-        if (brain !== undefined) {
-          try {
-            brain.learn('实操：' + (pending.name.trim() || '视频投喂'), pending.process.trim(), '实操')
-            ingestedVideos.add(key)
-            console.log('skill-store: 视频实操已入库 →', brainToolsOwner, pending.name)
-          } catch (error) {
-            console.error('skill-store: 视频实操入库失败', error)
+      if (!ingestedVideos.has(key)) {
+        try {
+          const topic = '实操：' + (pending.name.trim() || '视频投喂')
+          const content = pending.process.trim()
+          // 1) 总是写入全局大脑（用户的现实阅历，#实操 标签）——不勾选人格也有归属；
+          // 2) 勾选人格时同步到该人格大脑，让人格拥有自己的实操知识。
+          ensureGlobalBrain().learn(topic, content, '实操')
+          if (brainToolsOwner !== undefined) {
+            brains.get(brainToolsOwner)?.learn(topic, content, '实操')
           }
+          ingestedVideos.add(key)
+          console.log('skill-store: 视频实操已入库 → 全局大脑'
+            + (brainToolsOwner !== undefined ? ` + ${brainToolsOwner}` : ''), pending.name)
+        } catch (error) {
+          console.error('skill-store: 视频实操入库失败', error)
         }
       }
     }
@@ -1032,6 +1046,9 @@ const PERCEPTION_TTL_MS = 120_000
 /** 最近一帧视觉感知（由客户端写入 skill-vision.lastPerception 镜像而来）。 */
 let latestPerception: PerceptionSnapshot | undefined
 
+/** 全局大脑（$DSH_HOME/brain.db）：用户跨人格共享的实操阅历库，惰性打开。 */
+let globalBrain: PersonBrain | undefined
+
 /** 渲染 <perception> 感知区块（system prompt 动态节，每次装配求值）。 */
 function renderPerceptionSection(): string {
   const snapshot = latestPerception
@@ -1063,9 +1080,7 @@ function renderSensorySelf(): string {
  * @returns 人格包根目录的绝对路径。
  */
 function personsRootDir(): string {
-  const fromEnv = (process.env.DSH_HOME ?? '').trim()
-  const home = fromEnv !== '' ? fromEnv : join(homedir(), '.dsh')
-  return join(home, 'persons')
+  return join(dshHomeDir(), 'persons')
 }
 
 /**
@@ -1190,11 +1205,11 @@ function defineRememberTool(brain: PersonBrain) {
   })
 }
 
-/** recall()：从当前人格的大脑记忆中回忆相关内容。 */
+/** recall()：从当前人格的大脑记忆中回忆相关内容，并附带全局大脑的实操阅历。 */
 function defineRecallTool(brain: PersonBrain) {
   return defineTool({
     name: 'recall',
-    description: '从当前人格的大脑记忆中回忆与查询相关的内容（或最近记忆）。回答涉及用户偏好、过往约定、历史事件前，先调用它回忆。',
+    description: '回忆与查询相关内容：当前人格自己的记忆，以及你在全局大脑中的实操阅历（用户真实做过的实操，带 #实操 标签）。回答涉及用户偏好、过往约定、历史事件、实操经验前，先调用它回忆。',
     parameters: {
       query: { type: 'string', description: '回忆关键词；留空返回最近记忆。' },
       limit: { type: 'number', description: '返回条数上限，默认 8。' },
@@ -1220,14 +1235,33 @@ function defineRecallTool(brain: PersonBrain) {
               },
             },
           },
+          practice: {
+            type: 'array',
+            required: true,
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                topic: { type: 'string', required: true },
+                content: { type: 'string', required: true },
+                tags: { type: 'string', required: true },
+                updatedAt: { type: 'string', required: true },
+              },
+            },
+          },
         },
       },
       render: (_args, value) => {
-        const result = value as { count: number; memories: PersonMemory[] }
-        if (result.count === 0) return [{ type: 'text', text: '大脑记忆中没有相关内容。' }]
-        const lines = result.memories.map(memory =>
-          `- [${memory.createdAt}] (${memory.kind}) ${memory.content}`)
-        return [{ type: 'text', text: `回忆起 ${result.count} 条记忆：\n${lines.join('\n')}` }]
+        const result = value as { count: number; memories: PersonMemory[]; practice: PersonKnowledge[] }
+        const lines: string[] = []
+        for (const memory of result.memories) {
+          lines.push(`- [记忆 ${memory.createdAt}] (${memory.kind}) ${memory.content}`)
+        }
+        for (const item of result.practice) {
+          lines.push(`- [实操阅历 ${item.updatedAt}] ${item.topic}：${item.content}`)
+        }
+        if (lines.length === 0) return [{ type: 'text', text: '大脑记忆与实操阅历中没有相关内容。' }]
+        return [{ type: 'text', text: `回忆到 ${result.memories.length} 条记忆 + ${result.practice.length} 条实操阅历：\n${lines.join('\n')}` }]
       },
     },
     async execute(args: unknown) {
@@ -1235,7 +1269,16 @@ function defineRecallTool(brain: PersonBrain) {
       const query = typeof input.query === 'string' ? input.query : ''
       const limit = typeof input.limit === 'number' ? input.limit : 8
       const memories = brain.recall(query, limit)
-      return { count: memories.length, memories }
+      // 全局大脑的实操阅历并入召回（按更新时间倒序，最多 5 条），
+      // 让人格能引用用户真实做过的实操，而不只是自己的记忆。
+      let practice: PersonKnowledge[] = []
+      if (globalBrain !== undefined) {
+        const all = globalBrain.recallKnowledge('', '实操').slice(0, 5)
+        practice = query.trim() === ''
+          ? all
+          : all.filter(item => item.topic.includes(query) || item.content.includes(query))
+      }
+      return { count: memories.length + practice.length, memories, practice }
     },
   })
 }
