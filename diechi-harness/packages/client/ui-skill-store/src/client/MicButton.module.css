@@ -1,0 +1,56 @@
+/* Composer mic button (按住说话). */
+
+.mic,
+.micActive {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1px solid var(--dsw-alias-border-l2, rgba(127, 127, 127, 0.25));
+  background: transparent;
+  color: var(--dsw-alias-label-secondary, #8a8a8a);
+  cursor: pointer;
+  padding: 0;
+  position: relative;
+  touch-action: none;
+  user-select: none;
+}
+
+.mic:hover {
+  background: var(--dsw-alias-interactive-bg-hover, rgba(128, 128, 128, 0.12));
+}
+
+.mic:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.micActive {
+  background: var(--dsw-alias-text-danger, #d64545);
+  border-color: transparent;
+  color: #fff;
+  animation: micPulse 1.1s ease-in-out infinite;
+}
+
+@keyframes micPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(214, 69, 69, 0.45); }
+  50% { box-shadow: 0 0 0 5px rgba(214, 69, 69, 0); }
+}
+
+.error {
+  position: absolute;
+  bottom: 120%;
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--dsw-alias-text-danger, #c53030);
+  background: var(--dsw-alias-surface-bg-1, #fff);
+  border: 1px solid var(--dsw-alias-border-l2, rgba(127, 127, 127, 0.25));
+  border-radius: 5px;
+  padding: 2px 7px;
+  pointer-events: none;
+  z-index: 30;
+}

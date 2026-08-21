@@ -1,0 +1,40 @@
+# 蝶翅APP后端依赖
+# 基于FastAPI的插件化架构
+
+# 核心框架
+fastapi==0.109.0
+uvicorn==0.27.0
+python-multipart==0.0.6
+
+# AI模型依赖
+transformers==4.38.2
+torch==2.2.0
+accelerate==0.27.0
+
+# HTTP客户端
+httpx==0.26.0
+
+# 数据库驱动
+sqlalchemy==2.0.25
+psycopg2-binary==2.9.9
+
+# 安全和认证
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+bcrypt==4.1.2
+
+# 配置管理
+python-dotenv==1.0.0
+
+# 日志管理
+logging==0.4.9.6
+
+# 测试
+pytest==7.4.4
+pytest-asyncio==0.23.5
+httpx==0.26.0
+
+# 开发工具
+black==24.2.0
+flake8==6.1.0
+mypy==1.8.0

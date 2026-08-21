@@ -1,0 +1,67 @@
+﻿/* Training dock: one full-width row above the composer card (训练模式). */
+
+.dock {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 8px 14px;
+  border: 1px solid var(--dsw-alias-border-l2, rgba(127, 127, 127, 0.16));
+  border-radius: 10px;
+  background: var(--dsw-alias-state-business-soft, rgba(107, 70, 193, 0.08));
+  font-size: 13px;
+}
+
+.title {
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+
+.hint {
+  flex: 1 1 auto;
+  min-width: 180px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.finish,
+.cancel {
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 5px 14px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.finish {
+  background: var(--dsw-alias-state-business-primary, #6b46c1);
+  color: #fff;
+}
+
+.finish:hover {
+  opacity: 0.9;
+}
+
+.cancel {
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  border-color: var(--dsw-alias-border-l2, rgba(127, 127, 127, 0.2));
+}
+
+.cancel:hover {
+  background: var(--dsw-alias-interactive-bg-hover, rgba(128, 128, 128, 0.12));
+}
+
+.finish:disabled,
+.cancel:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.ok {
+  color: var(--dsw-alias-text-success, #2f855a);
+}
+
+.error {
+  color: var(--dsw-alias-text-danger, #c53030);
+}

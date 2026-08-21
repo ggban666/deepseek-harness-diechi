@@ -1,0 +1,25 @@
+/* Per-message read-aloud speaker button: mirrors the shared IconActions
+   chrome so the strip reads as one row. */
+
+.action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 6px;
+  border: none;
+  border-radius: 28px;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+}
+
+.action:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-secondary);
+}
+
+.action[data-playing] {
+  color: var(--dsw-alias-label-primary);
+}

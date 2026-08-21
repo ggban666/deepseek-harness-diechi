@@ -1,0 +1,202 @@
+apiVersion: 1
+
+# Grafana仪表板配置
+# 定义要自动导入的仪表板
+
+providers:
+  # ========================================
+  # 仪表板提供者配置
+  # ========================================
+  - name: 'default'
+    orgId: 1
+    folder: ''
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards
+      foldersFromFilesStructure: true
+
+# ============================================
+# 仪表板配置说明
+# ============================================
+# - name: 提供者名称
+# - orgId: 组织ID
+# - folder: 仪表板文件夹
+# - type: 提供者类型 (file/api)
+# - disableDeletion: 是否允许删除
+# - updateIntervalSeconds: 更新间隔
+# - allowUiUpdates: 是否允许UI更新
+# - options.path: 仪表板文件路径
+# - foldersFromFilesStructure: 是否从文件结构创建文件夹
+
+# ============================================
+# 仪表板文件结构
+# ============================================
+# monitoring/grafana/provisioning/dashboards/
+# ├── diechi-overview.json          # 蝶翅APP整体监控
+# ├── backend-monitoring.json       # 后端服务监控
+# ├── frontend-monitoring.json      # 前端性能监控
+# ├── database-monitoring.json      # 数据库性能监控
+# ├── cache-monitoring.json         # 缓存性能监控
+# ├── message-queue-monitoring.json # 消息队列监控
+# ├── system-resources.json        # 系统资源监控
+# └── application-logs.json         # 应用日志分析
+
+# ============================================
+# 仪表板示例配置
+# ============================================
+# 每个仪表板JSON文件应该包含：
+# - title: 仪表板标题
+# - uid: 唯一标识符
+# - tags: 标签
+# - timezone: 时区
+# - panels: 面板列表
+# - templating: 模板变量
+# - time: 默认时间范围
+# - refresh: 自动刷新间隔
+
+# ============================================
+# 仪表板模板变量
+# ============================================
+# 可以定义模板变量，例如：
+# - 服务实例选择
+# - 时间范围选择
+# - 环境选择
+# - 环境变量选择
+
+# ============================================
+# 仪表板面板类型
+# ============================================
+# Grafana支持多种面板类型：
+# - Graph: 折线图、柱状图
+# - Singlestat: 单值统计
+# - Gauge: 仪表盘
+# - Bar Gauge: 柱状仪表盘
+# - Table: 表格
+# - Text: 文本
+# - Heatmap: 热力图
+# - Alert list: 告警列表
+# - Dashboard list: 仪表板列表
+# - Stats: 统计面板
+
+# ============================================
+# 仪表板配置最佳实践
+# ============================================
+# 1. 命名规范：
+#    - 使用描述性名称
+#    - 包含环境信息
+#    - 包含服务名称
+#    - 例如: "蝶翅APP-生产环境-整体监控"
+#
+# 2. 组织结构：
+#    - 按功能分组
+#    - 按服务分组
+#    - 按环境分组
+#    - 例如: 文件夹结构: /backend/, /frontend/, /database/
+#
+# 3. 标签管理：
+#    - 添加标签便于搜索
+#    - 例如: app=diechi, env=production, service=backend
+#
+# 4. 变量配置：
+#    - 使用模板变量提高复用性
+#    - 例如: ${service}, ${env}, ${instance}
+
+# ============================================
+# 仪表板导入方式
+# ============================================
+# 1. 通过配置文件：
+#    将JSON文件放在dashboards目录
+#
+# 2. 通过API：
+#    POST /api/dashboards/db
+#
+# 3. 通过UI：
+#    Grafana Web界面手动导入
+
+# ============================================
+# 仪表板维护
+# ============================================
+# 1. 定期更新：
+#    根据需求更新仪表板配置
+#
+# 2. 版本控制：
+#    将仪表板配置文件纳入版本控制
+#
+# 3. 备份配置：
+#    定期备份仪表板配置
+#
+# 4. 文档记录：
+#    记录仪表板用途和配置说明
+
+# ============================================
+# 仪表板访问权限
+# ============================================
+# 可以配置仪表板访问权限：
+# - 只读访问
+# - 编辑访问
+# - 管理访问
+# - 共享访问
+
+# ============================================
+# 仪表板性能优化
+# ============================================
+# 1. 减少面板数量：
+#    避免过多面板导致性能下降
+#
+# 2. 优化查询：
+#    使用高效的PromQL查询
+#
+# 3. 缓存数据：
+#    使用Grafana缓存减少重复查询
+#
+# 4. 限制时间范围：
+#    避免查询过长时间范围的数据
+
+# ============================================
+# 仪表板示例JSON结构
+# ============================================
+# {
+#   "title": "蝶翅APP整体监控",
+#   "uid": "diechi-overview",
+#   "tags": ["diechi", "overview", "production"],
+#   "timezone": "browser",
+#   "panels": [
+#     {
+#       "title": "API响应时间",
+#       "type": "graph",
+#       "targets": [
+#         {
+#           "expr": "rate(diechi_backend_http_request_duration_seconds_sum[5m]) / rate(diechi_backend_http_request_duration_seconds_count[5m])",
+#           "legendFormat": "{{instance}}"
+#         }
+#       ]
+#     }
+#   ],
+#   "templating": {
+#     "list": [
+#       {
+#         "name": "service",
+#         "query": "label_values(diechi_backend_http_requests_total, service)",
+#         "refresh": 1,
+#         "regex": ""
+#       }
+#     ]
+#   },
+#   "time": {
+#     "from": "now-1h",
+#     "to": "now"
+#   },
+#   "refresh": "30s"
+# }
+
+# ============================================
+# 仪表板配置验证
+# ============================================
+# 可以使用Grafana CLI验证配置：
+# grafana-cli --config /etc/grafana/grafana.ini admin reset-admin-password admin
+#
+# 或者通过API验证：
+# GET /api/health

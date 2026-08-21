@@ -1,0 +1,250 @@
+# 蝶翅APP Prometheus监控配置
+# 监控前端、后端、数据库、缓存等服务的性能指标
+
+global:
+  scrape_interval: 15s  # 采集间隔
+  evaluation_interval: 15s  # 规则评估间隔
+  scrape_timeout: 10s  # 采集超时
+  
+# 告警配置
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          # 告警管理器配置（可选）
+          # - alertmanager:9093
+
+# 规则文件
+rule_files:
+  # - "first_rules.yml"
+  # - "second_rules.yml"
+
+# 采集配置
+scrape_configs:
+  # ========================================
+  # 监控蝶翅APP后端服务
+  # ========================================
+  - job_name: 'diechi-backend'
+    metrics_path: '/metrics'
+    static_configs:
+      - targets: ['backend:8000']
+    scrape_interval: 15s
+    scrape_timeout: 10s
+    
+    # 重写标签
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+      - source_labels: [__meta_docker_container_name]
+        target_label: container
+    
+    # 指标过滤
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: 'diechi_.*'
+        action: keep
+
+  # ========================================
+  # 监控Nginx前端服务
+  # ========================================
+  - job_name: 'diechi-frontend'
+    metrics_path: '/metrics'
+    static_configs:
+      - targets: ['frontend:80']
+    scrape_interval: 15s
+    scrape_timeout: 10s
+    
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+      - source_labels: [__meta_docker_container_name]
+        target_label: container
+
+  # ========================================
+  # 监控PostgreSQL数据库
+  # ========================================
+  - job_name: 'diechi-postgres'
+    static_configs:
+      - targets: ['postgres:5432']
+    metrics_path: '/metrics'
+    scrape_interval: 30s
+    scrape_timeout: 10s
+    
+    # PostgreSQL监控需要额外配置
+    params:
+      dbname: ['diechi']
+      user: ['postgres']
+      password: ['postgres']
+    
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+      - source_labels: [__meta_docker_container_name]
+        target_label: container
+
+  # ========================================
+  # 监控Redis缓存
+  # ========================================
+  - job_name: 'diechi-redis'
+    static_configs:
+      - targets: ['redis:6379']
+    scrape_interval: 30s
+    scrape_timeout: 10s
+    
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+      - source_labels: [__meta_docker_container_name]
+        target_label: container
+
+  # ========================================
+  # 监控RabbitMQ消息队列
+  # ========================================
+  - job_name: 'diechi-rabbitmq'
+    static_configs:
+      - targets: ['rabbitmq:15672']
+    metrics_path: '/api/exporters/prometheus'
+    scrape_interval: 30s
+    scrape_timeout: 10s
+    
+    params:
+      node: ['rabbit@rabbitmq']
+    
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+      - source_labels: [__meta_docker_container_name]
+        target_label: container
+
+  # ========================================
+  # 监控系统资源 (Node Exporter)
+  # ========================================
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
+    scrape_interval: 30s
+    scrape_timeout: 10s
+    
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+      - source_labels: [__meta_docker_container_name]
+        target_label: container
+
+  # ========================================
+  # 监控容器资源 (cAdvisor)
+  # ========================================
+  - job_name: 'cadvisor'
+    static_configs:
+      - targets: ['cadvisor:8080']
+    scrape_interval: 30s
+    scrape_timeout: 10s
+    
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+      - source_labels: [__meta_docker_container_name]
+        target_label: container
+
+# ============================================
+# 监控配置说明
+# ============================================
+# - scrape_interval: 采集间隔时间
+# - evaluation_interval: 规则评估间隔时间
+# - scrape_timeout: 采集超时时间
+# - alerting: 告警配置
+# - rule_files: 告警规则文件
+# - scrape_configs: 采集配置列表
+
+# ============================================
+# 监控指标说明
+# ============================================
+# - diechi_backend_*: 蝶翅APP后端自定义指标
+# - nginx_*: Nginx性能指标
+# - postgres_*: PostgreSQL数据库指标
+# - redis_*: Redis缓存指标
+# - rabbitmq_*: RabbitMQ消息队列指标
+# - node_*: 系统资源指标
+# - container_*: 容器资源指标
+
+# ============================================
+# 告警规则示例
+# ============================================
+# 告警规则可以定义在单独的文件中，例如：
+# - monitoring/alert.rules.yml
+#
+# 示例告警规则：
+# groups:
+# - name: example
+#   rules:
+#   - alert: HighErrorRate
+#     expr: rate(diechi_backend_http_requests_total{status=~"5.."}[1m]) > 0.1
+#     for: 5m
+#     labels:
+#       severity: critical
+#     annotations:
+#       summary: "High error rate on {{ $labels.instance }}"
+#       description: "Error rate is {{ $value }} ( > 0.1)"
+
+# ============================================
+# 仪表板配置
+# ============================================
+# Prometheus仪表板可以通过Grafana导入：
+# - 后端监控: ID 1860
+# - Nginx监控: ID 12708
+# - PostgreSQL监控: ID 9628
+# - Redis监控: ID 763
+# - RabbitMQ监控: ID 10991
+
+# ============================================
+# 性能优化建议
+# ============================================
+# 1. 调整采集间隔：
+#    根据实际需求调整scrape_interval
+#
+# 2. 启用远程写入：
+#    将指标写入远程存储（Thanos、VictoriaMetrics等）
+#
+# 3. 配置告警路由：
+#    根据告警级别路由到不同的告警管理器
+#
+# 4. 使用服务发现：
+#    使用Consul或Kubernetes服务发现自动发现目标
+
+# ============================================
+# 安全配置建议
+# ============================================
+# 1. 启用TLS：
+#    配置HTTPS访问Prometheus
+#
+# 2. 访问控制：
+#    配置Basic Auth或OAuth2认证
+#
+# 3. 网络隔离：
+#    限制Prometheus访问网络
+#
+# 4. 数据加密：
+#    对敏感数据进行加密
+
+# ============================================
+# 存储配置
+# ============================================
+# Prometheus数据存储在本地磁盘：
+# - 存储路径: /prometheus
+# - 保留时间: 30d (默认)
+# - 最大大小: 50GB (根据需要调整)
+
+# ============================================
+# 维护和运维
+# ============================================
+# 1. 定期清理：
+#    定期清理过期数据
+#
+# 2. 备份配置：
+#    备份Prometheus配置和规则文件
+#
+# 3. 版本更新：
+#    定期更新Prometheus版本
+#
+# 4. 性能监控：
+#    监控Prometheus自身性能

@@ -1,0 +1,60 @@
+{
+  "name": "diechi-app",
+  "version": "1.0.0",
+  "description": "蝶翅APP - 可切换专家角色的AI工作台，基于DeepSeek Harness构建",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:web": "pnpm --filter @diechi/web run dev",
+    "build:web": "pnpm --filter @diechi/web run build",
+    "preview:web": "pnpm --filter @diechi/web run preview",
+    "test:web": "pnpm --filter @diechi/web run test",
+    "lint": "eslint . --ext .ts,.tsx,.js,.jsx",
+    "format": "prettier --write .",
+    "clean": "rm -rf node_modules dist apps/web/dist packages/**/lib",
+    "install-all": "pnpm install && pnpm --filter @diechi/web install"
+  },
+  "keywords": [
+    "AI",
+    "专家系统",
+    "Skill",
+    "DeepSeek Harness",
+    "蝶翅APP"
+  ],
+  "author": "振翅科技",
+  "license": "MIT",
+  "homepage": "https://github.com/vibechina/diechi-app",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/vibechina/diechi-app.git"
+  },
+  "bugs": {
+    "url": "https://github.com/vibechina/diechi-app/issues"
+  },
+  "engines": {
+    "node": ">=22.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "eslint": "^9.0.0",
+    "eslint-config-prettier": "^9.0.0",
+    "eslint-plugin-prettier": "^5.0.0",
+    "prettier": "^3.0.0",
+    "typescript": "^5.0.0"
+  },
+  "pnpm": {
+    "patchedDependencies": {},
+    "peerDependencyRules": {
+      "ignoreMissing": [
+        "@deepseek-ai/*"
+      ]
+    }
+  }
+}

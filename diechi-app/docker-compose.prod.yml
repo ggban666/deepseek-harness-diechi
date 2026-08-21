@@ -1,0 +1,422 @@
+version: '3.8'
+
+# 蝶翅APP生产环境Docker Compose配置
+# 基于DeepSeek Harness插件化架构
+# 包含前端、后端、数据库、缓存、监控等服务
+
+services:
+  # ========================================
+  # 前端服务 (React + Nginx)
+  # ========================================
+  frontend:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    container_name: diechi-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"  # HTTPS端口
+    environment:
+      - NODE_ENV=production
+      - REACT_APP_API_URL=http://backend:8000
+    volumes:
+      - ./apps/web/nginx.conf:/etc/nginx/conf.d/default.conf
+      - ./apps/web/dist:/usr/share/nginx/html
+      - ./logs/nginx:/var/log/nginx
+    depends_on:
+      - backend
+    networks:
+      - diechi-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+
+  # ========================================
+  # 后端服务 (FastAPI + Python)
+  # ========================================
+  backend:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: diechi-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - ENVIRONMENT=production
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+      - PORT=8000
+      - MODEL_CACHE_DIR=/app/models
+      - LOG_LEVEL=INFO
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/diechi
+      - REDIS_URL=redis://redis:6379/0
+      - RABBITMQ_URL=amqp://rabbitmq:5672
+    volumes:
+      - ./apps/api/uploads:/app/uploads
+      - ./apps/api/temp:/app/temp
+      - ./apps/api/static:/app/static
+      - ./models:/app/models  # 模型缓存目录
+      - ./logs/backend:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - diechi-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '1.0'
+          memory: 1G
+
+  # ========================================
+  # PostgreSQL数据库
+  # ========================================
+  postgres:
+    image: postgres:15-alpine
+    container_name: diechi-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=diechi
+      - POSTGRES_HOST_AUTH_METHOD=trust
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+      - ./init-db:/docker-entrypoint-initdb.d
+    ports:
+      - "5432:5432"
+    networks:
+      - diechi-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+  # ========================================
+  # Redis缓存
+  # ========================================
+  redis:
+    image: redis:7-alpine
+    container_name: diechi-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - ./data/redis:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - diechi-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+
+  # ========================================
+  # RabbitMQ消息队列
+  # ========================================
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: diechi-rabbitmq
+    restart: unless-stopped
+    environment:
+      - RABBITMQ_DEFAULT_USER=admin
+      - RABBITMQ_DEFAULT_PASS=admin
+    volumes:
+      - ./data/rabbitmq:/var/lib/rabbitmq
+    ports:
+      - "5672:5672"  # AMQP
+      - "15672:15672"  # 管理界面
+    networks:
+      - diechi-network
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "status"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+  # ========================================
+  # Prometheus监控
+  # ========================================
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: diechi-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./data/prometheus:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    networks:
+      - diechi-network
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+  # ========================================
+  # Grafana可视化
+  # ========================================
+  grafana:
+    image: grafana/grafana:latest
+    container_name: diechi-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./data/grafana:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    networks:
+      - diechi-network
+    depends_on:
+      - prometheus
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+  # ========================================
+  # ELK日志系统 (可选)
+  # ========================================
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.12.0
+    container_name: diechi-elasticsearch
+    restart: unless-stopped
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - bootstrap.memory_lock=true
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - ./data/elasticsearch:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"
+    networks:
+      - diechi-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9200"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.12.0
+    container_name: diechi-kibana
+    restart: unless-stopped
+    ports:
+      - "5601:5601"
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    networks:
+      - diechi-network
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5601"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+  logstash:
+    image: docker.elastic.co/logstash/logstash:8.12.0
+    container_name: diechi-logstash
+    restart: unless-stopped
+    volumes:
+      - ./monitoring/logstash/pipeline:/usr/share/logstash/pipeline
+      - ./logs:/var/log/diechi
+    environment:
+      - LS_JAVA_OPTS=-Xms256m -Xmx256m
+    networks:
+      - diechi-network
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9600"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+# ============================================
+# 网络配置
+# ============================================
+networks:
+  diechi-network:
+    driver: bridge
+    name: diechi-network
+
+# ============================================
+# 卷配置
+# ============================================
+volumes:
+  postgres_data:
+  redis_data:
+  rabbitmq_data:
+  prometheus_data:
+  grafana_data:
+  elasticsearch_data:
+
+# ============================================
+# 部署说明
+# ============================================
+# 1. 创建必要目录：
+#    mkdir -p data/{postgres,redis,rabbitmq,prometheus,grafana,elasticsearch} \
+#             logs/{nginx,backend} \
+#             models \
+#             init-db \
+#             monitoring/{prometheus,grafana,logstash}
+#
+# 2. 复制配置文件：
+#    cp monitoring/prometheus.yml.example monitoring/prometheus.yml
+#    cp monitoring/grafana/provisioning/dashboards/dashboard.yml.example monitoring/grafana/provisioning/dashboards/dashboard.yml
+#
+# 3. 设置环境变量：
+#    export DEEPSEEK_API_KEY=your-api-key
+#
+# 4. 启动服务：
+#    docker-compose -f docker-compose.prod.yml up -d
+#
+# 5. 停止服务：
+#    docker-compose -f docker-compose.prod.yml down
+#
+# 6. 查看日志：
+#    docker-compose -f docker-compose.prod.yml logs -f
+
+# ============================================
+# 监控和告警
+# ============================================
+# - Prometheus: http://localhost:9090
+# - Grafana: http://localhost:3000 (admin/admin)
+# - Kibana: http://localhost:5601
+# - RabbitMQ管理: http://localhost:15672 (admin/admin)
+
+# ============================================
+# 扩展配置
+# ============================================
+# - 增加前端实例：
+#   在frontend服务下添加replicas: 2
+#
+# - 增加后端实例：
+#   在backend服务下添加replicas: 2
+#
+# - 启用GPU加速：
+#   在backend服务下添加deploy.resources.gpu:
+#     reservations:
+#       devices:
+#         - driver: nvidia
+#           count: 1
+#           capabilities: [gpu]
+
+# ============================================
+# 安全配置
+# ============================================
+# - 修改所有默认密码
+# - 启用HTTPS (需要SSL证书)
+# - 配置防火墙规则
+# - 启用数据库备份
+# - 配置监控告警

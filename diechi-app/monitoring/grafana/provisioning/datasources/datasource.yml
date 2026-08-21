@@ -1,0 +1,144 @@
+apiVersion: 1
+
+# Grafana数据源配置
+# 连接Prometheus、Elasticsearch等数据源
+
+datasources:
+  # ========================================
+  # Prometheus数据源
+  # ========================================
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    jsonData:
+      timeInterval: "15s"
+      httpMethod: "POST"
+    version: 1
+    editable: true
+    
+  # ========================================
+  # Elasticsearch数据源 (可选)
+  # ========================================
+  - name: Elasticsearch
+    type: elasticsearch
+    access: proxy
+    url: http://elasticsearch:9200
+    jsonData:
+      timeField: "@timestamp"
+      interval: "Daily"
+      esVersion: "8.0.0"
+      logMessageField: "message"
+      logLevelField: "level"
+    version: 1
+    editable: true
+    
+  # ========================================
+  # PostgreSQL数据源 (可选)
+  # ========================================
+  - name: PostgreSQL
+    type: postgres
+    access: proxy
+    url: postgres:5432
+    user: postgres
+    database: diechi
+    password: postgres
+    jsonData:
+      postgresVersion: 15
+      sslmode: "disable"
+    version: 1
+    editable: true
+    
+  # ========================================
+  # 后端自定义指标数据源 (可选)
+  # ========================================
+  - name: Backend Metrics
+    type: prometheus
+    access: proxy
+    url: http://backend:8000/metrics
+    jsonData:
+      timeInterval: "15s"
+    version: 1
+    editable: true
+
+# ============================================
+# 数据源配置说明
+# ============================================
+# - name: 数据源名称
+# - type: 数据源类型
+# - access: 访问方式 (proxy/direct)
+# - url: 数据源地址
+# - isDefault: 是否默认数据源
+# - jsonData: JSON配置数据
+# - version: 配置版本
+# - editable: 是否可编辑
+
+# ============================================
+# 连接配置
+# ============================================
+# - Prometheus: http://prometheus:9090
+# - Elasticsearch: http://elasticsearch:9200
+# - PostgreSQL: postgres:5432
+# - Backend Metrics: http://backend:8000/metrics
+
+# ============================================
+# 安全配置建议
+# ============================================
+# 1. 使用环境变量：
+#    将密码配置在环境变量中
+#    例如: ${POSTGRES_PASSWORD}
+#
+# 2. 启用TLS：
+#    配置HTTPS访问
+#
+# 3. 访问控制：
+#    配置Basic Auth或OAuth2认证
+#
+# 4. 网络隔离：
+#    限制Grafana访问网络
+
+# ============================================
+# 仪表板配置
+# ============================================
+# Grafana仪表板可以通过以下方式配置：
+# 1. 通过API导入
+# 2. 通过配置文件定义
+# 3. 通过UI手动配置
+
+# ============================================
+# 仪表板示例
+# ============================================
+# 1. 蝶翅APP整体监控
+# 2. 后端服务监控
+# 3. 前端性能监控
+# 4. 数据库性能监控
+# 5. 缓存性能监控
+# 6. 消息队列监控
+# 7. 系统资源监控
+# 8. 应用日志分析
+
+# ============================================
+# 维护和运维
+# ============================================
+# 1. 定期检查：
+#    定期检查数据源连接状态
+#
+# 2. 配置备份：
+#    备份数据源配置文件
+#
+# 3. 版本更新：
+#    定期更新Grafana版本
+#
+# 4. 性能监控：
+#    监控Grafana自身性能
+
+# ============================================
+# 环境变量配置
+# ============================================
+# 可以使用环境变量覆盖配置：
+# - GF_SECURITY_ADMIN_USER
+# - GF_SECURITY_ADMIN_PASSWORD
+# - GF_USERS_ALLOW_SIGN_UP
+# - GF_AUTH_DISABLE_LOGIN_FORM
+# - GF_AUTH_ANONYMOUS_ENABLED

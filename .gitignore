@@ -1,0 +1,36 @@
+# 依赖与构建产物
+node_modules/
+**/node_modules/
+.pnpm-store/
+diechi-harness/lib/
+dist/
+**/dist/
+*.tsbuildinfo
+diechi-harness/.pnpm-store/
+
+# 本地数据与敏感信息（凭据/会话/缓存，绝不入库）
+diechi-home/
+logs/
+*.log
+
+# Windows 本地运行资产（不随仓库迁移）
+*.exe
+models/
+vllm-env/
+
+# 归档与参考基线
+_归档脚本/
+_整理归档/
+deepseek-harness-base/
+
+# 本地环境
+.env
+.env.local
+CLAUDE.local.md
+
+# 本地 agent 笔记/技能数据（不入库）
+**/.agents/
+**/.claude/
+蝶翅APP 启动日志.txt
+*.exe.bak
+*.bak
