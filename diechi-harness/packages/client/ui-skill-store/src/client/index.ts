@@ -27,6 +27,8 @@ import {
 } from './SkillStoreSection.tsx'
 import { VisionSection, type VisionSectionInjected, type VisionState } from './VisionSection.tsx'
 import { VoiceSection, type VoiceSectionInjected } from './VoiceSection.tsx'
+import { DevicesSection, type DevicesSectionInjected, type DevicesState } from './DevicesSection.tsx'
+import { WebBluetoothTransport } from './device-transport.ts'
 import { VoiceReplyActions, type VoiceReplyInjected } from './VoiceReplyActions.tsx'
 import {
   armVoiceAudioWarmup, streamVoice, StreamingVoicePlayer, transcribeAudio as asrTranscribe, VOICE_DEFAULT_ENDPOINT, VOICE_DEFAULT_SPEED,
@@ -58,6 +60,7 @@ export type {
 export type { VisionSectionInjected, VisionState } from './VisionSection.tsx'
 export type { VoiceState } from './voice.ts'
 export type { VoiceSectionInjected } from './VoiceSection.tsx'
+export type { DevicesSectionInjected, DevicesState } from './DevicesSection.tsx'
 export type {
   CompanionAudioRoute, CompanionDevice, CompanionMessage, CompanionTransport,
   BluetoothCompanionTransport, CompanionDeviceKind, CompanionTransportKind,
@@ -132,6 +135,13 @@ const VOICE_DEFAULT_PROVIDER: VoiceState['provider'] = 'local'
  */
 type SendOutcome<S = string> = { ok: true; sessionId: S } | { ok: false; error: string }
 
+/** Durable companion-device preferences (skill-devices namespace). */
+export interface DevicesSettings {
+  readonly connectedId: string
+  readonly inputEnabled: boolean
+  readonly outputEnabled: boolean
+}
+
 /**
  * Bridges the store namespaces (catalog, vision, market) and the skill-center
  * view state onto snapshot hooks and actions. Reads never block; writes carry
@@ -141,6 +151,7 @@ class SkillStoreController {
   private readonly store: SnapshotStore<SkillStoreState>
   private readonly vision: SnapshotStore<VisionState>
   private readonly voice: SnapshotStore<VoiceState>
+  private readonly devices: SnapshotStore<DevicesState>
   private readonly market: SnapshotStore<MarketState>
   private visionSessionId: string
   private visionTurnAbort: AbortController | undefined
@@ -148,6 +159,7 @@ class SkillStoreController {
   private readonly training: SnapshotStore<TrainingState>
   private voicePlayer: StreamingVoicePlayer | undefined = undefined
   private voiceAbort: AbortController | undefined = undefined
+  private readonly bluetooth = new WebBluetoothTransport()
 
   /**
    * @param storeScope - bound scope for the `skill.store` catalog.
@@ -161,6 +173,7 @@ class SkillStoreController {
     private readonly voiceScope: SettingsScope<VoiceState>,
     private readonly marketScope: SettingsScope<SkillMarketSettings>,
     private readonly trainingScope: SettingsScope<SkillTrainingSettings>,
+    private readonly devicesScope: SettingsScope<DevicesSettings>,
     private readonly sendRetrain: (id: string, description: string) => Promise<RetrainResult>,
     private readonly sendCreate: (input: CreateSkillInput) => Promise<RetrainResult>,
     private readonly sendTrainingGuide: (input: TrainingStartInput) => Promise<SendOutcome>,
@@ -183,6 +196,15 @@ class SkillStoreController {
       asrEnabled: false,
     })
     this.market = createSnapshotStore<MarketState>({ status: 'loading', dir: '', skills: [] })
+    this.devices = createSnapshotStore<DevicesState>({
+      supported: WebBluetoothTransport.supported(),
+      device: undefined,
+      connected: false,
+      inputEnabled: true,
+      outputEnabled: true,
+      scanning: false,
+      busy: false,
+    })
     this.center = createSnapshotStore<SkillCenterState>({ view: 'closed' })
     this.training = createSnapshotStore<TrainingState>(IDLE_TRAINING)
     this.refreshStore()
@@ -195,6 +217,13 @@ class SkillStoreController {
     this.voiceScope.subscribe(() => { this.refreshVoice() })
     this.marketScope.subscribe(() => { this.refreshMarket() })
     this.trainingScope.subscribe(() => { this.refreshTraining() })
+    this.devicesScope.subscribe(() => { this.refreshDevices() })
+    // 蓝牙链路断开（设备关机 / 离开范围）时自动把连接态复位。
+    this.bluetooth.subscribe((message) => {
+      if (message.type === 'session/state' && message.state === 'interrupted') {
+        this.devices.set({ ...this.devices.getSnapshot(), connected: false, busy: false })
+      }
+    })
     armVoiceAudioWarmup()
   }
 
@@ -257,6 +286,101 @@ class SkillStoreController {
       sessionId: value?.sessionId ?? '',
       startedAt: value?.startedAt ?? 0,
     })
+  }
+
+  /** 从 skill-devices 作用域实时读取音频路由偏好。 */
+  private refreshDevices(): void {
+    const snapshot = this.devicesScope.getSnapshot()
+    const value = snapshot.value
+    this.devices.set({
+      ...this.devices.getSnapshot(),
+      inputEnabled: value?.inputEnabled ?? true,
+      outputEnabled: value?.outputEnabled ?? true,
+    })
+  }
+
+  /** 持久化设备偏好（音频路由 / 记住的设备 id）。 */
+  private async setDevices(patch: Partial<DevicesSettings>): Promise<void> {
+    const current = this.devicesScope.getSnapshot().value
+      ?? { connectedId: '', inputEnabled: true, outputEnabled: true }
+    if (patch.connectedId !== undefined && patch.connectedId !== current.connectedId) {
+      await this.devicesScope.set('connectedId', patch.connectedId)
+    }
+    if (patch.inputEnabled !== undefined && patch.inputEnabled !== current.inputEnabled) {
+      await this.devicesScope.set('inputEnabled', patch.inputEnabled)
+    }
+    if (patch.outputEnabled !== undefined && patch.outputEnabled !== current.outputEnabled) {
+      await this.devicesScope.set('outputEnabled', patch.outputEnabled)
+    }
+  }
+
+  /** 打开系统 BLE 配对面板，选择并记住一个伴生设备。 */
+  async scanDevices(): Promise<void> {
+    if (!WebBluetoothTransport.supported()) throw new Error('bluetooth-unsupported')
+    this.devices.set({ ...this.devices.getSnapshot(), scanning: true, busy: true })
+    try {
+      const device = await this.bluetooth.requestPairing()
+      this.devices.set({
+        ...this.devices.getSnapshot(),
+        device,
+        connected: false,
+        scanning: false,
+        busy: false,
+      })
+    } catch (error) {
+      this.devices.set({ ...this.devices.getSnapshot(), scanning: false, busy: false })
+      throw error
+    }
+  }
+
+  /** 连接已配对设备（GATT + NUS），成功后记住设备 id。 */
+  async connectDevice(): Promise<void> {
+    const current = this.devices.getSnapshot()
+    if (current.device === undefined) throw new Error('no-device')
+    this.devices.set({ ...this.devices.getSnapshot(), busy: true })
+    try {
+      const connected = await this.bluetooth.connect(current.device.id)
+      this.devices.set({
+        ...this.devices.getSnapshot(),
+        device: connected,
+        connected: true,
+        busy: false,
+      })
+      await this.setDevices({ connectedId: connected.id })
+    } catch (error) {
+      this.devices.set({ ...this.devices.getSnapshot(), busy: false })
+      throw error
+    }
+  }
+
+  /** 断开伴生设备。 */
+  async disconnectDevice(): Promise<void> {
+    const current = this.devices.getSnapshot()
+    if (!current.connected) return
+    this.devices.set({ ...this.devices.getSnapshot(), busy: true })
+    try {
+      await this.bluetooth.disconnect()
+      this.devices.set({ ...this.devices.getSnapshot(), connected: false, busy: false })
+    } catch (error) {
+      this.devices.set({ ...this.devices.getSnapshot(), busy: false })
+      throw error
+    }
+  }
+
+  /** 通过蓝牙向伴生设备发送协议握手帧。 */
+  async sendHello(): Promise<boolean> {
+    const current = this.devices.getSnapshot()
+    if (!current.connected || current.device === undefined) return false
+    try {
+      await this.bluetooth.send({
+        type: 'device/hello',
+        protocol: 1,
+        device: current.device,
+      })
+      return true
+    } catch {
+      return false
+    }
   }
 
   /**
@@ -1006,6 +1130,23 @@ class SkillStoreController {
   }
 
   /**
+   * Build the face the 蓝牙设备 settings section slot registration injects.
+   * @returns the companion-device snapshot hook plus pair / link verbs.
+   */
+  injectDevices(): DevicesSectionInjected {
+    return {
+      hooks: {
+        devices: this.devices as HostObservable<DevicesState>,
+      },
+      scan: () => this.scanDevices(),
+      connect: () => this.connectDevice(),
+      disconnect: () => this.disconnectDevice(),
+      setRoutes: (patch) => this.setDevices(patch),
+      sendHello: () => this.sendHello(),
+    }
+  }
+
+  /**
    * Build the face the composer mic button injects: the voice snapshot plus
    * the speech-to-text verb.
    * @returns the mic button business face.
@@ -1187,6 +1328,7 @@ export function apply(ctx: ClientContext): void {
       scope.settingsScope.bind({ namespace: 'skill-voice' }),
       scope.settingsScope.bind({ namespace: 'skill-market' }),
       scope.settingsScope.bind({ namespace: 'skill-training' }),
+      scope.settingsScope.bind({ namespace: 'skill-devices' }),
       async (id, description): Promise<RetrainResult> => sendToConversation(
         `${t('workshopConversationCopy').replace('{id}', id)}\n\n${t('retrainPromptSuffix').replace('{text}', description.trim())}`,
       ),
@@ -1206,6 +1348,17 @@ export function apply(ctx: ClientContext): void {
       locale: NS,
       inject: () => controller.inject(),
     }, SkillStoreSection))
+
+    // Bottom-left settings: 蓝牙设备 — companion-device pairing over Web
+    // Bluetooth (Nordic UART) with persisted audio-route preferences.
+    scope.slots.inject('settings.section', () => scope.slots.register({
+      name: 'settings.section',
+      id: 'devices',
+      order: 23,
+      label: () => t('devicesNav'),
+      locale: NS,
+      inject: () => controller.injectDevices(),
+    }, DevicesSection))
 
     // Bottom-left settings: 视觉 — local-vision configuration (enable switch,
     // endpoint, model, camera caption cadence) plus the recognition entry

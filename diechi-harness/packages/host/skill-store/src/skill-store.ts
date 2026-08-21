@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Skill 商店 host plugin: bridges the durable `skill.store` / `skill.vision`
  * settings namespaces onto the runtime skill registry (`ctx.skills`).
  *
@@ -58,6 +58,9 @@ export const SKILL_VOICE_NS = 'skill-voice'
 
 /** Settings namespace owning the scanned local market catalog. */
 export const SKILL_MARKET_NS = 'skill-market'
+
+/** Settings namespace owning the companion-device (蓝牙) configuration. */
+export const SKILL_DEVICES_NS = 'skill-devices'
 
 /** Settings namespace owning the in-flight training session (训练模式). */
 export const SKILL_TRAINING_NS = 'skill-training'
@@ -356,6 +359,16 @@ const voiceSchema = z.object({
   voice: z.string().default('zf_001'),
   speed: z.number().default(1),
   asrEnabled: z.boolean().default(false),
+})
+
+/** Durable companion-device (蓝牙) configuration schema. */
+const devicesSchema = z.object({
+  // 当前连接的伴生设备 id（重新打开页面时优先重连）。
+  connectedId: z.string().default(''),
+  // 伴生设备音频输入（麦克风）路由开关。
+  inputEnabled: z.boolean().default(true),
+  // 伴生设备音频输出（扬声器）路由开关。
+  outputEnabled: z.boolean().default(true),
 })
 
 /**
@@ -710,6 +723,7 @@ export function apply(ctx: Context): void {
   const store = ctx.settings.register(settingsNamespace(SKILL_STORE_NS), skillStoreSchema)
   const vision = ctx.settings.register(settingsNamespace(SKILL_VISION_NS), visionSchema)
   ctx.settings.register(settingsNamespace(SKILL_VOICE_NS), voiceSchema)
+  ctx.settings.register(settingsNamespace(SKILL_DEVICES_NS), devicesSchema)
   ctx.settings.register(settingsNamespace(SKILL_TRAINING_NS), trainingSchema)
 
   // 供消费插件（如 diechi-brain）注入的服务：平权技能目录与视觉配置作用域。

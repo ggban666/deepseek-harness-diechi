@@ -1,4 +1,4 @@
-﻿/** Locale bundles for the Skill 商店 settings section. */
+/** Locale bundles for the Skill 商店 settings section. */
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
@@ -24,6 +24,10 @@ export type SkillStoreKey =
   | 'videoTranscript'
   | 'visionDisabled' | 'visionEndpointMissing' | 'visionTimeout' | 'visionEmpty' | 'visionFailed'
   | 'voiceNav' | 'voiceTitle' | 'voiceHint' | 'voiceEnabled' | 'voiceAuto'
+  | 'devicesNav' | 'devicesTitle' | 'devicesIntro' | 'devicesUnsupported' | 'devicesScan' | 'devicesScanning'
+  | 'devicesNoDevice' | 'devicesConnect' | 'devicesDisconnect' | 'devicesConnected' | 'devicesDisconnected'
+  | 'devicesKindGlasses' | 'devicesKindHeadset' | 'devicesKindPhone' | 'devicesUnknown'
+  | 'devicesInput' | 'devicesOutput' | 'devicesRouteHint' | 'devicesHello' | 'devicesHelloOk' | 'devicesHelloFailed' | 'devicesError'
   | 'voiceProvider' | 'voiceProviderLocal' | 'voiceProviderOpenAI'
   | 'voiceEndpoint' | 'voiceApiKey' | 'voiceModel' | 'voiceVoice' | 'voiceSpeed'
   | 'voiceVoice1' | 'voiceVoice2' | 'voiceVoice3' | 'voiceVoice4'
@@ -117,8 +121,30 @@ export const en: Record<SkillStoreKey, string> = {
   visionTimeout: 'Recognition timed out. Make sure the local vision server (127.0.0.1:8080) is running.',
   visionEmpty: 'The model returned no usable content.',
   visionFailed: 'Recognition failed. Check that the local vision server (127.0.0.1:8080) is running; camera clips longer than 15 minutes are rejected.',
+  devicesTitle: 'Companion devices',
+  devicesIntro: 'Pair an AI-glasses / headset / phone companion over Bluetooth Low Energy (Nordic UART). Audio and camera streams ride the CompanionMessage protocol, so the same bridge works on the future phone app.',
+  devicesUnsupported: 'Web Bluetooth is not available in this browser. Use Chrome or Edge (desktop / Android) for BLE pairing.',
+  devicesScan: 'Scan & pair',
+  devicesScanning: 'Scanning...',
+  devicesNoDevice: 'No device paired yet. Click Scan & pair to open the system chooser.',
+  devicesConnect: 'Connect',
+  devicesDisconnect: 'Disconnect',
+  devicesConnected: 'Connected',
+  devicesDisconnected: 'Disconnected',
+  devicesKindGlasses: 'AI glasses',
+  devicesKindHeadset: 'Headset',
+  devicesKindPhone: 'Phone',
+  devicesUnknown: 'Unknown device',
+  devicesInput: 'Use device mic',
+  devicesOutput: 'Use device speaker',
+  devicesRouteHint: 'Audio routing preferences are saved locally and reused after re-pairing.',
+  devicesHello: 'Send hello',
+  devicesHelloOk: 'Hello delivered to the device.',
+  devicesHelloFailed: 'Hello failed. Is the device still connected?',
+  devicesError: 'Operation failed. Check that the device is powered on and in range.',
   recognitionNotReady: 'Recognition is unavailable right now.',
   voiceNav: 'Voice',
+  devicesNav: 'Bluetooth',
   voiceTitle: 'Reply-to-speech',
   voiceHint: 'Speak assistant replies aloud with your configured TTS service. The local Kokoro server runs at 127.0.0.1:8080 (auto-started with the launcher); you can also switch to any OpenAI-compatible speech API.',
   voiceEnabled: 'Enable reply-to-speech',
@@ -354,8 +380,30 @@ export const zh: Record<SkillStoreKey, string> = {
   visionTimeout: '识别超时，请确认本地视觉服务（127.0.0.1:8080）正在运行。',
   visionEmpty: '模型没有返回有效内容。',
   visionFailed: '识别失败，请确认本地视觉服务（127.0.0.1:8080）已启动；摄像头录制超 15 分钟也会被拒绝。',
+  devicesTitle: '伴生设备',
+  devicesIntro: '通过蓝牙低功耗（Nordic UART）配对 AI 眼镜 / 耳机 / 手机伴生设备。音频与画面帧走 CompanionMessage 协议，后续手机 App 可直接复用这条桥。',
+  devicesUnsupported: '当前浏览器不支持 Web Bluetooth。请使用 Chrome 或 Edge（桌面 / Android）进行蓝牙配对。',
+  devicesScan: '扫描并配对',
+  devicesScanning: '扫描中…',
+  devicesNoDevice: '还没有配对设备。点击「扫描并配对」打开系统选择面板。',
+  devicesConnect: '连接',
+  devicesDisconnect: '断开',
+  devicesConnected: '已连接',
+  devicesDisconnected: '未连接',
+  devicesKindGlasses: 'AI 眼镜',
+  devicesKindHeadset: '耳机',
+  devicesKindPhone: '手机',
+  devicesUnknown: '未知设备',
+  devicesInput: '使用设备麦克风',
+  devicesOutput: '使用设备扬声器',
+  devicesRouteHint: '音频路由偏好保存在本地，重新配对后自动沿用。',
+  devicesHello: '发送握手',
+  devicesHelloOk: '握手消息已送达设备。',
+  devicesHelloFailed: '握手失败。请确认设备仍在线。',
+  devicesError: '操作失败。请确认设备已开机且在蓝牙范围内。',
   recognitionNotReady: '当前无法进行识别。',
   voiceNav: '语音',
+  devicesNav: '蓝牙设备',
   voiceTitle: '回复转语音',
   voiceHint: '把助手的回复用语音读出来。默认使用本机 Kokoro（8080 端口，启动器自动拉起）；也可以切换到任意 OpenAI 兼容的语音合成 API。',
   voiceEnabled: '启用回复转语音',

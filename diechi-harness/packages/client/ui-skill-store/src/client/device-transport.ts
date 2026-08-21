@@ -92,3 +92,167 @@ export interface BluetoothCompanionTransport extends CompanionTransport {
   requestPairing(): Promise<CompanionDevice>
 }
 
+/** Nordic UART Service (NUS)：手机/眼镜/耳机伴生桥使用的 BLE 串口服务。 */
+export const BLE_COMPANION_SERVICE = '6e400001-b5a3-f393-e0a9-e50e24dcca9e'
+/** 下行特征（APP → 设备，write）。 */
+export const BLE_COMPANION_TX = '6e400002-b5a3-f393-e0a9-e50e24dcca9e'
+/** 上行特征（设备 → APP，notify）。 */
+export const BLE_COMPANION_RX = '6e400003-b5a3-f393-e0a9-e50e24dcca9e'
+
+/** Web Bluetooth API 的最小结构面（lib.dom 未内置，避免引入额外依赖）。 */
+interface WebBluetooth {
+  requestDevice(options: {
+    filters?: ReadonlyArray<{ services?: readonly string[]; name?: string; namePrefix?: string }>
+    optionalServices?: readonly string[]
+    acceptAllDevices?: boolean
+  }): Promise<BluetoothDeviceLike>
+}
+interface BluetoothDeviceLike {
+  readonly id: string
+  readonly name?: string
+  readonly gatt?: BluetoothRemoteGATTServerLike
+  addEventListener(type: 'gattserverdisconnected', listener: () => void): void
+}
+interface BluetoothRemoteGATTServerLike {
+  readonly connected: boolean
+  connect(): Promise<BluetoothRemoteGATTServerLike>
+  disconnect(): void
+  getPrimaryService(service: string): Promise<BluetoothRemoteGATTServiceLike>
+}
+interface BluetoothRemoteGATTServiceLike {
+  getCharacteristic(characteristic: string): Promise<BluetoothRemoteGATTCharacteristicLike>
+}
+interface BluetoothRemoteGATTCharacteristicLike {
+  readonly value?: DataView
+  addEventListener(type: 'characteristicvaluechanged', listener: () => void): void
+  writeValue(value: BufferSource): Promise<void>
+  startNotifications(): Promise<BluetoothRemoteGATTCharacteristicLike>
+  stopNotifications(): Promise<BluetoothRemoteGATTCharacteristicLike>
+}
+
+declare global {
+  interface Navigator {
+    bluetooth?: WebBluetooth
+  }
+}
+
+/** 已连接的 NUS 设备句柄。 */
+interface PairedNusDevice {
+  readonly device: BluetoothDeviceLike
+  readonly server: BluetoothRemoteGATTServerLike
+  readonly tx: BluetoothRemoteGATTCharacteristicLike
+  readonly rx: BluetoothRemoteGATTCharacteristicLike
+}
+
+/**
+ * Web Bluetooth（Nordic UART）伴生桥：Chromium 桌面 / Android 端与 AI 眼镜、
+ * 手机伴生应用走 NUS + CompanionMessage JSON 帧。桌面扫描依赖用户手势打开
+ * 系统配对面板；配对后的连接 / 断开 / 收发帧全程在此完成。
+ */
+export class WebBluetoothTransport implements BluetoothCompanionTransport {
+  readonly kind = 'bluetooth-le' as const
+  private readonly listeners = new Set<(message: CompanionMessage) => void>()
+  private readonly decoder = new TextDecoder()
+  private device: BluetoothDeviceLike | undefined
+  private link: PairedNusDevice | undefined
+
+  /** 当前运行环境是否提供 Web Bluetooth（Chrome/Edge 桌面与 Android 为真）。 */
+  static supported(): boolean {
+    return typeof navigator !== 'undefined' && navigator.bluetooth !== undefined
+  }
+
+  /** 打开系统配对面板，选择一个广播 NUS 的伴生设备。 */
+  async requestPairing(): Promise<CompanionDevice> {
+    const bluetooth = navigator.bluetooth
+    if (bluetooth === undefined) throw new Error('bluetooth-unsupported')
+    const device = await bluetooth.requestDevice({
+      filters: [{ services: [BLE_COMPANION_SERVICE] }],
+      optionalServices: [BLE_COMPANION_SERVICE],
+    })
+    this.device = device
+    return toCompanionDevice(device, false)
+  }
+
+  /** 扫描 = 打开系统配对面板（Web Bluetooth 必须由用户手势触发）。 */
+  async scan(): Promise<readonly CompanionDevice[]> {
+    return [await this.requestPairing()]
+  }
+
+  async connect(deviceId: string): Promise<CompanionDevice> {
+    const device = this.device
+    if (device === undefined || device.id !== deviceId) {
+      // 尚未选择过该设备（例如刷新后重连）：重新走配对面板。
+      const paired = await this.requestPairing()
+      return this.connect(paired.id)
+    }
+    if (device.gatt === undefined) throw new Error('bluetooth-no-gatt')
+    const server = await device.gatt.connect()
+    const service = await server.getPrimaryService(BLE_COMPANION_SERVICE)
+    const tx = await service.getCharacteristic(BLE_COMPANION_TX)
+    const rx = await service.getCharacteristic(BLE_COMPANION_RX)
+    rx.addEventListener('characteristicvaluechanged', () => { this.dispatchRx() })
+    await rx.startNotifications()
+    this.link = { device, server, tx, rx }
+    device.addEventListener('gattserverdisconnected', () => {
+      this.link = undefined
+      this.serverLost()
+    })
+    return toCompanionDevice(device, true)
+  }
+
+  async disconnect(): Promise<void> {
+    const link = this.link
+    this.link = undefined
+    if (link === undefined) return
+    await link.rx.stopNotifications().catch(() => {})
+    link.server.disconnect()
+    this.serverLost()
+  }
+
+  async send(message: CompanionMessage): Promise<void> {
+    if (this.link === undefined) throw new Error('bluetooth-not-connected')
+    const payload = new TextEncoder().encode(JSON.stringify(message))
+    await this.link.tx.writeValue(payload)
+  }
+
+  subscribe(listener: (message: CompanionMessage) => void): () => void {
+    this.listeners.add(listener)
+    return () => { this.listeners.delete(listener) }
+  }
+
+  /** 连接断开后通知订阅方把设备标记为未连接。 */
+  private serverLost(): void {
+    const message: CompanionMessage = {
+      type: 'session/state',
+      sessionId: '',
+      state: 'interrupted',
+    }
+    for (const listener of this.listeners) listener(message)
+  }
+
+  private dispatchRx(): void {
+    const value = this.link?.rx.value
+    if (value === undefined) return
+    const text = this.decoder.decode(value)
+    try {
+      const message = JSON.parse(text) as CompanionMessage
+      for (const listener of this.listeners) listener(message)
+    } catch {
+      // 非 CompanionMessage JSON 帧（如调试串口）直接忽略。
+    }
+  }
+}
+
+/** BluetoothDeviceLike → 协议设备视图。 */
+function toCompanionDevice(device: BluetoothDeviceLike, connected: boolean): CompanionDevice {
+  return {
+    id: device.id,
+    name: device.name || '蓝牙伴生设备',
+    kind: 'ai-glasses',
+    transport: 'bluetooth-le',
+    connected,
+    input: true,
+    output: true,
+  }
+}
+
