@@ -34,3 +34,4 @@ CLAUDE.local.md
 蝶翅APP 启动日志.txt
 *.exe.bak
 *.bak
+*.bak-*
