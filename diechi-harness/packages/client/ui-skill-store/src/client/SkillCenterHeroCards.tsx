@@ -1,6 +1,6 @@
 /**
  * Hero quick-action cards: two clickable product cards (商店 / 工坊) in the
- * empty-state quick row. Each opens the skill center (shell.overlay) on its
+ * empty-state quick row. Each opens the Pingquan skill center (shell.overlay) on its
  * tab; the same injected face the overlay uses is bound here, so opening from
  * the hero and from within the center share one open/close state.
  */

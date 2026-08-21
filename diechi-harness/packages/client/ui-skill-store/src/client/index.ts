@@ -1,6 +1,6 @@
 /**
- * Skill 设置 browser half: one `settings.section` page (bottom-left settings
- * → Skill 设置), the hero quick-action cards, and the full-screen 技能中心
+ * 平权技能设置 browser half: one `settings.section` page (bottom-left settings
+ * → 平权技能设置), the hero quick-action cards, and the full-screen 平权技能中心
  * (`shell.overlay`) with 商店 / 工坊 tabs. Durable state rides the three
  * namespaces the web bundle's skill-store row owns — `skill.store` (the
  * installed catalog), `skill.vision` (the live local-vision config) and
@@ -1058,7 +1058,7 @@ class SkillStoreController {
 }
 
 /**
- * Client plugin body: register the dictionaries, the Skill 设置 section, the
+ * Client plugin body: register the dictionaries, the 平权技能设置 section, the
  * hero quick-action cards and the full-screen skill center.
  * @param ctx - client root context.
  */
@@ -1178,7 +1178,7 @@ export function apply(ctx: ClientContext): void {
       async (context): Promise<RetrainResult> => sendToConversation(context),
     )
 
-    // Bottom-left settings: Skill 设置 (settings stay inside settings; the
+    // Bottom-left settings: 平权技能设置 (settings stay inside settings; the
     // store and the workshop live outside it in the skill center).
     scope.slots.inject('settings.section', () => scope.slots.register({
       name: 'settings.section',

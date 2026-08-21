@@ -1,5 +1,5 @@
 ﻿/**
- * 技能中心 full-screen surface (shell.overlay): one page, two tabs — 商店
+ * 平权技能中心 full-screen surface (shell.overlay): one page, two tabs — 商店
  * (the local market catalog) and 工坊 (installed-skill management plus
  * creation/import). Rendered as a frame-wide page while open; renders
  * nothing when closed, so the overlay layer stays click-through for the
