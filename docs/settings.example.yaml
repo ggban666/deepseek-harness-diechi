@@ -1,0 +1,61 @@
+# 蝶翅APP 配置模板（脱敏示例）
+# 用法: 复制到本地 diechi-home/settings.yaml 后按需修改（注意: diechi-home 不进 git 仓库）
+# 密钥一律用环境变量名引用（apiKeyEnv），不要在这里写明文密钥。
+
+ui-theme:
+  preference: dark
+
+permission:
+  defaultPreset: danger-full-access
+
+# 模型供应商（llm-pi-ai 命名空间）
+llm-pi-ai:
+  providers:
+    # 本地视觉/语音服务（8080，MiniCPM-V-4.6 + faster-whisper + Kokoro）
+    local-vision:
+      displayName: 本地视觉 (MiniCPM-V-4.6)
+      api: openai-completions
+      baseURL: http://127.0.0.1:8080/v1
+      models:
+        - id: minicpm-v-4.6
+          name: MiniCPM-V-4.6
+    # 示例: 云端供应商（密钥引用环境变量，如 ABL_API_KEY）
+    abl:
+      displayName: '示例供应商'
+      apiKeyEnv: ABL_API_KEY
+      api: openai-completions
+      baseURL: https://example.com/v1
+      models:
+        - id: example-model
+          name: example-model
+
+# 默认对话模型（deepseek-official 为内置供应商，无需密钥）
+agent-default-model:
+  provider: deepseek-official
+  model: deepseek-v4-flash
+  reasoningEffort: high
+
+# 视觉设置（摄像头对话 / 识别生成技能）
+skill-vision:
+  enabled: true
+  endpoint: http://127.0.0.1:8080
+  model: MiniCPM-V-4.6
+  intervalSec: 10       # 画面描述频率(秒): 3/5/10/15
+  voiceChat: true       # 持续语音对话（自动识别并回应）
+  chatIntervalSec: 20   # 自动发送画面给 AI 的频率(秒): 10/20/30/60 或 0=关闭
+
+# 语音设置（回复转语音 / ASR 语音输入）
+skill-voice:
+  enabled: true
+  autoSpeak: true
+  provider: local      # local = 本机 Kokoro 8080；也可换 OpenAI 兼容 API
+  endpoint: http://127.0.0.1:8080
+  apiKey: ''           # 远程 TTS 服务时才需要
+  model: ''
+  voice: zf_001        # zf_001/zf_018/zm_010/zm_016
+  speed: 1.6
+  asrEnabled: true     # 语音输入（按住说话/持续聆听）
+
+# Skill 商店已安装技能（用户数据，默认空；实际数据在 diechi-home）
+skill-store:
+  skills: []
