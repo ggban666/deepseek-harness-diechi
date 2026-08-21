@@ -285,8 +285,10 @@ export function CameraChatDock({
       captionRef.current = ''
       setActive(true)
       setCaption(t('cameraChatWaiting'))
-    } catch {
-      setError(t('cameraChatDenied'))
+    } catch (error) {
+      setError(error instanceof DOMException && error.name === 'NotAllowedError'
+        ? t('cameraChatDenied')
+        : t('cameraChatFailed'))
     } finally {
       setStarting(false)
     }
@@ -371,8 +373,10 @@ export function CameraChatDock({
       vadBusyRef.current = false
       setListening(true)
       vadTimerRef.current = window.setInterval(() => { void vadFrame() }, 100)
-    } catch {
-      setError(t('voiceChatDenied'))
+    } catch (error) {
+      setError(error instanceof DOMException && error.name === 'NotAllowedError'
+        ? t('voiceChatDenied')
+        : t('voiceChatFailed'))
     }
   }
 
@@ -536,8 +540,10 @@ export function CameraChatDock({
       recorder.start()
       stopSpeaking()
       setRecording(true)
-    } catch {
-      setError(t('voiceChatDenied'))
+    } catch (error) {
+      setError(error instanceof DOMException && error.name === 'NotAllowedError'
+        ? t('voiceChatDenied')
+        : t('voiceChatFailed'))
     }
   }
 
@@ -571,11 +577,14 @@ export function CameraChatDock({
 
   if (!active) {
     return (
-      <div className={css.row}>
-        <button type="button" className={css.start} disabled={starting} onClick={() => { void startCamera() }}>
-          {starting ? t('pending') : t('cameraChatStart')}
-        </button>
-        <span className={css.hint}>{t('cameraChatHint')}</span>
+      <div>
+        <div className={css.row}>
+          <button type="button" className={css.start} disabled={starting} onClick={() => { void startCamera() }}>
+            {starting ? t('pending') : t('cameraChatStart')}
+          </button>
+          <span className={css.hint}>{t('cameraChatHint')}</span>
+        </div>
+        {error !== '' && <div className={css.error} role="alert">{error}</div>}
       </div>
     )
   }

@@ -1,4 +1,4 @@
-﻿/** Locale bundles for the Skill 商店 settings section. */
+﻿﻿﻿/** Locale bundles for the Skill 商店 settings section. */
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
@@ -51,14 +51,14 @@ export type SkillStoreKey =
   | 'workshopVisionTitle' | 'workshopVisionHint' | 'workshopVisionReserved' | 'workshopSettingsHint'
   | 'heroMarketCard' | 'heroMarketCardDesc' | 'heroWorkshopCard' | 'heroWorkshopCardDesc'
   | 'cameraChatStart' | 'cameraChatHint' | 'cameraChatTitle' | 'cameraChatWaiting'
-  | 'cameraChatSend' | 'cameraChatStop' | 'cameraChatDenied' | 'cameraChatUnsupported'
+  | 'cameraChatSend' | 'cameraChatStop' | 'cameraChatDenied' | 'cameraChatFailed' | 'cameraChatUnsupported'
   | 'cameraChatContext' | 'cameraChatSendFailed'
   | 'visionInterval' | 'visionIntervalOff' | 'visionInterval3' | 'visionInterval5' | 'visionInterval10' | 'visionInterval15' | 'visionInterval30'
   | 'cameraChatGroup' | 'cameraChatGroupHint' | 'voiceChatEnabled'
   | 'chatInterval' | 'chatIntervalOff' | 'chatInterval10' | 'chatInterval20' | 'chatInterval30' | 'chatInterval60'
   | 'chatAutoBadge' | 'voiceChatBadge'
-  | 'voiceChatMicLabel' | 'voiceChatBusy' | 'voiceChatUnsupported' | 'voiceChatDenied' | 'voiceChatEmpty' | 'voiceChatNoReply' | 'voiceChatThinking' | 'voiceChatUserPrefix' | 'voiceChatListening' | 'voiceChatHeard'
-  | 'voiceInput' | 'voiceInputTitle' | 'voiceInputBusy' | 'voiceInputUnsupported' | 'voiceInputDenied' | 'voiceInputEmpty'
+  | 'voiceChatMicLabel' | 'voiceChatBusy' | 'voiceChatUnsupported' | 'voiceChatDenied' | 'voiceChatFailed' | 'voiceChatEmpty' | 'voiceChatNoReply' | 'voiceChatThinking' | 'voiceChatUserPrefix' | 'voiceChatListening' | 'voiceChatHeard'
+  | 'voiceInput' | 'voiceInputTitle' | 'voiceInputBusy' | 'voiceInputUnsupported' | 'voiceInputDenied' | 'voiceInputFailed' | 'voiceInputEmpty'
 
 /** English copy. */
 export const en: Record<SkillStoreKey, string> = {
@@ -254,8 +254,9 @@ export const en: Record<SkillStoreKey, string> = {
   cameraChatWaiting: 'Recognizing…',
   cameraChatSend: 'Tell the assistant',
   cameraChatStop: 'Close',
-  cameraChatDenied: 'Camera access denied. Check the browser permission.',
-  cameraChatUnsupported: 'Camera is not supported in this browser.',
+  cameraChatDenied: 'Camera access denied. Click the lock icon in the address bar to allow the camera; if it still fails, enable camera access in Windows Settings > Privacy & security > Camera.',
+  cameraChatFailed: 'Failed to start the camera. Please retry.',
+  cameraChatUnsupported: 'Camera is not supported in this browser (requires HTTPS or localhost).',
   cameraChatContext: '[Live camera] The user has handed the camera view to you. Read your latest vision perception and continue the conversation based on what you see; never say you cannot see the view.',
   cameraChatSendFailed: 'Could not reach the conversation. Open or create one first.',
   cameraChatGroup: 'Camera chat',
@@ -273,8 +274,9 @@ export const en: Record<SkillStoreKey, string> = {
   voiceChatBusy: 'Thinking…',
   voiceChatListening: 'Listening… (talk whenever)',
   voiceChatHeard: 'Heard you… (recognizing)',
-  voiceChatUnsupported: 'Speech input is not supported in this browser.',
-  voiceChatDenied: 'Microphone access denied. Check the browser permission.',
+  voiceChatUnsupported: 'Speech input is not supported in this browser (requires HTTPS or localhost).',
+  voiceChatDenied: 'Microphone access denied. Click the lock icon in the address bar to allow the microphone; if it still fails, enable microphone access in Windows Settings > Privacy & security > Microphone and check the input device.',
+  voiceChatFailed: 'Failed to start the microphone. Please retry.',
   voiceChatEmpty: 'Nothing recognized. Please try again.',
   voiceChatNoReply: 'The vision model returned no reply. Is the local vision service (127.0.0.1:8080) running?',
   voiceChatThinking: '你说：{text}',
@@ -289,8 +291,9 @@ export const en: Record<SkillStoreKey, string> = {
   voiceInput: 'Enable voice input (hold mic to talk)',
   voiceInputTitle: 'Hold to talk — speech becomes text',
   voiceInputBusy: 'Recognizing speech…',
-  voiceInputUnsupported: 'Speech input is not supported in this browser.',
-  voiceInputDenied: 'Microphone access denied. Check the browser permission.',
+  voiceInputUnsupported: 'Speech input is not supported in this browser (requires HTTPS or localhost).',
+  voiceInputDenied: 'Microphone access denied. Click the lock icon in the address bar to allow the microphone; if it still fails, enable microphone access in Windows Settings > Privacy & security > Microphone.',
+  voiceInputFailed: 'Failed to start the microphone. Please retry.',
   voiceInputEmpty: 'Nothing recognized. Please try again.'
 }
 
@@ -488,8 +491,9 @@ export const zh: Record<SkillStoreKey, string> = {
   cameraChatWaiting: '正在识别画面…',
   cameraChatSend: '让助手说说我',
   cameraChatStop: '关闭',
-  cameraChatDenied: '无法访问摄像头，请检查浏览器权限。',
-  cameraChatUnsupported: '当前浏览器不支持摄像头。',
+  cameraChatDenied: '无法访问摄像头：请点击地址栏左侧的锁图标允许摄像头权限；若仍失败，请在 Windows「设置 → 隐私和安全性 → 摄像头」中开启应用访问。',
+  cameraChatFailed: '摄像头启动失败，请重试。',
+  cameraChatUnsupported: '当前浏览器不支持摄像头（需要 HTTPS 或 localhost 访问）。',
   cameraChatContext: '[摄像头] 用户把摄像头画面交给了你。查看你最新的视觉感知，基于你亲眼看到的画面继续对话；不要说你看不到画面或无法查看摄像头。',
   cameraChatSendFailed: '无法发送到当前对话，请先新建或打开一个对话。',
   cameraChatGroup: '摄像头对话',
@@ -507,8 +511,9 @@ export const zh: Record<SkillStoreKey, string> = {
   voiceChatBusy: '思考中…',
   voiceChatListening: '聆听中…（随时说话）',
   voiceChatHeard: '听到你了…（正在识别）',
-  voiceChatUnsupported: '当前浏览器不支持语音输入。',
-  voiceChatDenied: '无法访问麦克风，请检查浏览器权限。',
+  voiceChatUnsupported: '当前浏览器不支持语音输入（需要 HTTPS 或 localhost 访问）。',
+  voiceChatDenied: '无法访问麦克风：请点击地址栏左侧的锁图标允许麦克风权限；若仍失败，请在 Windows「设置 → 隐私和安全性 → 麦克风」中开启应用访问，并确认输入设备正确。',
+  voiceChatFailed: '麦克风启动失败，请重试。',
   voiceChatEmpty: '没有识别到内容，请再试一次。',
   voiceChatNoReply: '视觉模型没有返回回复，请确认本地视觉服务（127.0.0.1:8080）正在运行。',
   voiceChatThinking: '你说：{text}',
@@ -523,7 +528,8 @@ export const zh: Record<SkillStoreKey, string> = {
   voiceInput: '启用语音输入（按住麦克风说话）',
   voiceInputTitle: '按住说话，语音转文字',
   voiceInputBusy: '正在识别语音…',
-  voiceInputUnsupported: '当前浏览器不支持语音输入。',
-  voiceInputDenied: '无法访问麦克风，请检查浏览器权限。',
+  voiceInputUnsupported: '当前浏览器不支持语音输入（需要 HTTPS 或 localhost 访问）。',
+  voiceInputDenied: '无法访问麦克风：请点击地址栏左侧的锁图标允许麦克风权限；若仍失败，请在 Windows「设置 → 隐私和安全性 → 麦克风」中开启应用访问。',
+  voiceInputFailed: '麦克风启动失败，请重试。',
   voiceInputEmpty: '没有识别到内容，请重试。'
 }

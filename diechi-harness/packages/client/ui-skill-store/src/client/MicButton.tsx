@@ -85,8 +85,10 @@ export function MicButton({ t, useVoice, useInput, inputActions, transcribeAudio
       recorder.onstop = () => { void finish() }
       recorder.start()
       setRecording(true)
-    } catch {
-      setError(t('voiceInputDenied'))
+    } catch (error) {
+      setError(error instanceof DOMException && error.name === 'NotAllowedError'
+        ? t('voiceInputDenied')
+        : t('voiceInputFailed'))
     }
   }
 
