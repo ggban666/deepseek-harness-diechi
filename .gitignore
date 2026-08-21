@@ -35,3 +35,10 @@ CLAUDE.local.md
 *.exe.bak
 *.bak
 *.bak-*
+
+# 已归档的 v1.0 旧结构（2026-08-22 归档至 _清理归档\）
+/apps/
+/packages/
+/diechi-app/
+/package.json
+/pnpm-lock.yaml
