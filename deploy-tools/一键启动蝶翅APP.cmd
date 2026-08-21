@@ -43,6 +43,9 @@ if exist "node_modules" (
     )
 )
 
+:: 固化数据目录(DSH_HOME)：避免回退 ~/.dsh 导致供应商丢失
+set "DSH_HOME=%CD%\..\diechi-home"
+echo [DSH_HOME]=%DSH_HOME%
 echo 正在启动蝶翅APP (DeepSeek Harness基座)...
 echo 访问地址: http://127.0.0.1:3090
 

@@ -87,7 +87,7 @@ goto menu
 cls
 echo 正在启动 蝶翅APP基座 (端口3090)...
 cd /d "%DIECHI_HOME%"
-start "蝶翅APP" cmd /c "pnpm dsh web --port 3090"
+start "蝶翅APP" cmd /c "set DSH_HOME=%DIECHI_DATA%&& pnpm dsh web --port 3090"
 echo 启动命令已发送，请稍等...
 timeout /t 3 >nul
 goto menu
@@ -95,8 +95,7 @@ goto menu
 :stop_diechi
 cls
 echo 停止 蝶翅APP基座 (端口3090)...
-taskkill /f /im node.exe >nul 2>&1
-taskkill /f /im "蝶翅APP" >nul 2>&1
+for /f "tokens=5" %%P in ('netstat -ano ^| findstr ":3090" ^| findstr "LISTENING"') do taskkill /f /pid %%P >nul 2>&1
 echo 已停止蝶翅APP基座
 timeout /t 2 >nul
 goto menu
@@ -109,7 +108,7 @@ goto menu
 cls
 echo 正在启动 原版Harness (端口3080)...
 cd /d "%ORIGIN_HOME%"
-start "原版Harness" cmd /c "pnpm dsh web --port 3080"
+start "原版Harness" cmd /c "set DSH_HOME=&& pnpm dsh web --port 3080"
 echo 启动命令已发送，请稍等...
 timeout /t 3 >nul
 goto menu
@@ -117,8 +116,7 @@ goto menu
 :stop_origin
 cls
 echo 停止 原版Harness (端口3080)...
-taskkill /f /im node.exe >nul 2>&1
-taskkill /f /im "原版Harness" >nul 2>&1
+for /f "tokens=5" %%P in ('netstat -ano ^| findstr ":3080" ^| findstr "LISTENING"') do taskkill /f /pid %%P >nul 2>&1
 echo 已停止原版Harness
 timeout /t 2 >nul
 goto menu
