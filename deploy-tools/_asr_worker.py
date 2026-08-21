@@ -3,8 +3,8 @@
 启动时加载一次模型，之后通过 stdin/stdout 按行 JSON 收发任务，避免每次调用重复冷启动。
 协议（每行一个 JSON）：
   req : {"id": <int>, "wav": "<base64 16k 单声道 wav>"}
-  resp: {"id": <int>, "text": "<识别文本>"}
-失败或无声时 text 为空串，进程继续存活。
+  resp: {"id": <int>, "text": "<识别文本>", "segments": [{"start": <秒>, "end": <秒>, "text": "<句子文本>"}]}
+失败或无声时 text 为空串、segments 为空列表，进程继续存活。
 """
 import base64
 import json
@@ -53,15 +53,19 @@ def main():
                     f.write(wav)
                     tmp = f.name
                 segments, _info = model.transcribe(tmp, language=None, vad_filter=True)
-                parts = [seg.text.strip() for seg in segments]
-                text = ' '.join(p for p in parts if p)
+                seg_list = [
+                    {'start': round(seg.start, 2), 'end': round(seg.end, 2), 'text': seg.text.strip()}
+                    for seg in segments if seg.text and seg.text.strip()
+                ]
+                parts = [seg['text'] for seg in seg_list]
+                text = ' '.join(parts)
             finally:
                 if tmp:
                     try:
                         os.unlink(tmp)
                     except OSError:
                         pass
-            sys.stdout.write(json.dumps({'id': job_id, 'text': text}, ensure_ascii=False) + '\n')
+            sys.stdout.write(json.dumps({'id': job_id, 'text': text, 'segments': seg_list}, ensure_ascii=False) + '\n')
             sys.stdout.flush()
         except Exception as exc:
             sys.stderr.write('asr worker job error: %s\n' % exc)

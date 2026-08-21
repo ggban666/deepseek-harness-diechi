@@ -32,6 +32,8 @@ export interface VisionState {
   readonly chatIntervalSec: number
   /** 最近一帧视觉感知（宿主镜像用；摄像头会话中由客户端发布）。 */
   readonly lastPerception?: { readonly at: string; readonly text: string }
+  /** 视频投喂识别的实操过程（识别完成后发布；宿主自动写入大脑 #实操）。 */
+  readonly videoProcess?: { readonly at: string; readonly name: string; readonly process: string }
 }
 
 /** Registration-side business face for the section. */

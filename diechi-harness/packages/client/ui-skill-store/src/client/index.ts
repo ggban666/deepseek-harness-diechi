@@ -645,15 +645,31 @@ class SkillStoreController {
         signal: controller.signal,
       })
       if (!response.ok) return { ok: false, error: `vision-http:${response.status}` }
-      const payload = await response.json() as { content?: string; transcript?: string | null }
+      const payload = await response.json() as {
+        content?: string; transcript?: string | null; process?: string; real_duration?: number
+      }
       const content = payload.content?.trim()
       if (!content) return { ok: false, error: 'vision-empty' }
       const transcript = payload.transcript?.trim() || undefined
+      const process = payload.process?.trim() || undefined
       const draft = parseSkillDraft(content)
       const transcriptExtra = transcript !== undefined ? { transcript } : {}
+      // 视频实操过程发布到宿主：自动写入当前人格大脑（#实操 标签）。
+      if (process !== undefined) {
+        try {
+          await this.visionScope.set('videoProcess', {
+            at: new Date().toISOString(),
+            name: file.name,
+            process,
+          })
+        } catch {
+          // 入库失败不阻断识别结果展示。
+        }
+      }
+      const processExtra = process !== undefined ? { process } : {}
       return draft === undefined
-        ? { ok: true, notice: content, ...transcriptExtra }
-        : { ok: true, notice: content, draft, ...transcriptExtra }
+        ? { ok: true, notice: content, ...transcriptExtra, ...processExtra }
+        : { ok: true, notice: content, draft, ...transcriptExtra, ...processExtra }
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
         return { ok: false, error: 'vision-timeout' }

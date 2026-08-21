@@ -328,6 +328,13 @@ const visionSchema = z.object({
   // 最近一帧视觉感知（客户端在摄像头会话中发布；宿主镜像进内存供
   // <perception> 区块与 see() 工具读取，TTL 内有效）。
   lastPerception: z.object({ at: z.string(), text: z.string() }).required(false),
+  // 视频投喂识别的实操过程（客户端识别完成后发布；宿主自动写入当前
+  // 人格大脑的 knowledge，打「实操」标签，供技能提炼时引用）。
+  videoProcess: z.object({
+    at: z.string(),
+    name: z.string(),
+    process: z.string(),
+  }).required(false),
 })
 
 const voiceSchema = z.object({
@@ -824,6 +831,8 @@ export function apply(ctx: Context): void {
   // 的人格持有大脑工具（避免重复注册冲突，也符合「一个完整的人」语义）。
   const registrations = new Map<string, () => void>()
   const brains = new Map<string, PersonBrain>()
+  /** 已入库的视频实操（按 videoProcess.at 去重）。 */
+  const ingestedVideos = new Set<string>()
   const personToolDisposers = new Map<string, () => void>()
   const personaTexts = new Map<string, string>()
   let brainToolsOwner: string | undefined
@@ -924,6 +933,24 @@ export function apply(ctx: Context): void {
   // 视觉设置变化：镜像最新感知 → 重挂 see()/感知区块 → 重绘人格。
   vision.watch((next) => {
     latestPerception = next.lastPerception
+    // 视频投喂的实操过程：写入当前 owner 大脑（knowledge + 实操标签），
+    // 同一视频（按 at 时间戳）只入库一次。
+    const pending = next.videoProcess
+    if (pending !== undefined && pending.process.trim() !== '') {
+      const key = 'video:' + pending.at
+      if (!ingestedVideos.has(key) && brainToolsOwner !== undefined) {
+        const brain = brains.get(brainToolsOwner)
+        if (brain !== undefined) {
+          try {
+            brain.learn('实操：' + (pending.name.trim() || '视频投喂'), pending.process.trim(), '实操')
+            ingestedVideos.add(key)
+            console.log('skill-store: 视频实操已入库 →', brainToolsOwner, pending.name)
+          } catch (error) {
+            console.error('skill-store: 视频实操入库失败', error)
+          }
+        }
+      }
+    }
     syncVisionSurfaces(next)
     sync(store.get(), next)
   })

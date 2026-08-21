@@ -38,6 +38,8 @@ export interface PersonKnowledge {
   readonly topic: string
   /** 知识正文。 */
   readonly content: string
+  /** 标签（逗号分隔，如 "实操,8D"），用于区分实操/理论等来源。 */
+  readonly tags: string
   /** 最近更新的 ISO 时间戳。 */
   readonly updatedAt: string
 }
@@ -55,6 +57,7 @@ CREATE INDEX IF NOT EXISTS idx_memories_created ON memories (created_at DESC);
 CREATE TABLE IF NOT EXISTS knowledge (
   topic TEXT PRIMARY KEY,
   content TEXT NOT NULL,
+  tags TEXT NOT NULL DEFAULT '',
   updated_at TEXT NOT NULL
 );
 `
@@ -83,6 +86,12 @@ export class PersonBrain {
     mkdirSync(dir, { recursive: true })
     const db = new DatabaseSync(join(dir, 'brain.db'))
     db.exec(BRAIN_SCHEMA)
+    // 迁移：旧库 knowledge 表没有 tags 列时补列。
+    try {
+      db.exec('ALTER TABLE knowledge ADD COLUMN tags TEXT NOT NULL DEFAULT \'\'')
+    } catch {
+      // 已存在（新库 CREATE 已含 tags），忽略。
+    }
     return new PersonBrain(dir, db)
   }
 
@@ -146,13 +155,14 @@ export class PersonBrain {
    * @param topic - 主题键。
    * @param content - 知识正文。
    */
-  learn(topic: string, content: string): void {
+  learn(topic: string, content: string, tags = ''): void {
     this.assertOpen()
     const updatedAt = new Date().toISOString()
+    const cleanTags = tags.trim()
     this.db.prepare(
-      'INSERT INTO knowledge (topic, content, updated_at) VALUES (?, ?, ?) '
-      + 'ON CONFLICT(topic) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at',
-    ).run(topic.trim(), content, updatedAt)
+      'INSERT INTO knowledge (topic, content, tags, updated_at) VALUES (?, ?, ?, ?) '
+      + 'ON CONFLICT(topic) DO UPDATE SET content = excluded.content, tags = excluded.tags, updated_at = excluded.updated_at',
+    ).run(topic.trim(), content, cleanTags, updatedAt)
   }
 
   /**
@@ -160,11 +170,14 @@ export class PersonBrain {
    * @param topic - 可选主题键（精确匹配）。
    * @returns 知识行列表。
    */
-  recallKnowledge(topic = ''): PersonKnowledge[] {
+  recallKnowledge(topic = '', tagFilter = ''): PersonKnowledge[] {
     this.assertOpen()
+    const cleanFilter = tagFilter.trim()
     const rows = topic.trim() === ''
-      ? this.db.prepare('SELECT topic, content, updated_at FROM knowledge ORDER BY updated_at DESC').all()
-      : this.db.prepare('SELECT topic, content, updated_at FROM knowledge WHERE topic = ?').all(topic.trim())
+      ? (cleanFilter === ''
+        ? this.db.prepare('SELECT topic, content, tags, updated_at FROM knowledge ORDER BY updated_at DESC').all()
+        : this.db.prepare('SELECT topic, content, tags, updated_at FROM knowledge WHERE tags LIKE ? ORDER BY updated_at DESC').all('%' + cleanFilter + '%'))
+      : this.db.prepare('SELECT topic, content, tags, updated_at FROM knowledge WHERE topic = ?').all(topic.trim())
     return rows.map(toKnowledge)
   }
 
@@ -203,6 +216,7 @@ function toKnowledge(row: Record<string, unknown>): PersonKnowledge {
   return {
     topic: String(row.topic),
     content: String(row.content),
+    tags: String(row.tags ?? ''),
     updatedAt: String(row.updated_at),
   }
 }

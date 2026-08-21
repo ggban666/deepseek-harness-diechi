@@ -32,7 +32,14 @@ export interface SkillDraft {
 
 /** Outcome of a local-vision recognition request. */
 export type RecognitionResult =
-  | { readonly ok: true; readonly notice: string; readonly draft?: SkillDraft; readonly transcript?: string }
+  | {
+      readonly ok: true
+      readonly notice: string
+      readonly draft?: SkillDraft
+      readonly transcript?: string
+      /** 视频识别产出的实操过程详述（按时间顺序的操作步骤）。 */
+      readonly process?: string
+    }
   | { readonly ok: false; readonly error: string }
 
 /** Outcome of a retrain request sent into the conversation. */
