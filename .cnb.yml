@@ -1,11 +1,13 @@
 # 蝶翅APP - CNB 云原生开发配置
 # 参考: https://docs.cnb.cool/zh/workspaces/custom-dev-env.html
-# 说明: 使用 GPU 构建节点（cnb:arch:amd64:gpu, 48GB 显存 H20/L40, 固定 16 核）
-#       模拟本地 8G 显存约束请见 docs/CNB开发指南.md「云端 GPU 与 8G 模拟」
+# 说明: 使用 CPU 节点（免费额度 1600 核时/月；8 核 ≈ 200 小时/月）。
+#       GPU 节点（cnb:arch:amd64:gpu, 48GB H20/L40）免费额度为 0（0.5元/核时），
+#       需先绑定腾讯云预算才能用；要跑模型推理时再把 tags 换回 cnb:arch:amd64:gpu
 $:
   vscode:
     - runner:
-        tags: cnb:arch:amd64:gpu
+        tags: cnb:arch:amd64
+        cpus: 8
       docker:
         build: .ide/Dockerfile
         image: cnbcool/default-dev-env:latest
