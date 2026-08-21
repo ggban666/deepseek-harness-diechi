@@ -30,6 +30,8 @@ export interface VisionState {
   readonly voiceChat: boolean
   /** Auto-send the latest caption to the main chat every N seconds (0 = off). */
   readonly chatIntervalSec: number
+  /** 最近一帧视觉感知（宿主镜像用；摄像头会话中由客户端发布）。 */
+  readonly lastPerception?: { readonly at: string; readonly text: string }
 }
 
 /** Registration-side business face for the section. */

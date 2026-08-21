@@ -29,7 +29,8 @@ import type {} from '@deepseek-ai/dsh-settings'
 import type {} from '@deepseek-ai/dsh-skill'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { readdir, readFile } from 'node:fs/promises'
+import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises'
+import { PersonBrain, type PersonMemory } from './person-brain'
 
 /** Stable Cordis plugin name. */
 export const name = 'skill-store'
@@ -324,6 +325,9 @@ const visionSchema = z.object({
   intervalSec: z.number().default(5),
   voiceChat: z.boolean().default(false),
   chatIntervalSec: z.number().default(0),
+  // 最近一帧视觉感知（客户端在摄像头会话中发布；宿主镜像进内存供
+  // <perception> 区块与 see() 工具读取，TTL 内有效）。
+  lastPerception: z.object({ at: z.string(), text: z.string() }).required(false),
 })
 
 const voiceSchema = z.object({
@@ -688,7 +692,7 @@ async function scanSkillMarket(): Promise<SkillMarketSkill[]> {
  */
 export function apply(ctx: Context): void {
   const store = ctx.settings.register(settingsNamespace(SKILL_STORE_NS), skillStoreSchema)
-  ctx.settings.register(settingsNamespace(SKILL_VISION_NS), visionSchema)
+  const vision = ctx.settings.register(settingsNamespace(SKILL_VISION_NS), visionSchema)
   ctx.settings.register(settingsNamespace(SKILL_VOICE_NS), voiceSchema)
   ctx.settings.register(settingsNamespace(SKILL_TRAINING_NS), trainingSchema)
 
@@ -813,48 +817,143 @@ export function apply(ctx: Context): void {
   })
   ctx.tools.register(generateTool)
 
-  // The reserved generation seam (SkillGenerator) is intentionally not wired
-  // yet: a future local-vision backend replaces createSkillGenerator without
-  // changing the settings UI or the store format.
+  // ---- 人格包：数据库(大脑) + 能力(工具) + 人格(提示词) 的原子热重载 ----
+  // 勾选一个人格 = 换上一个完整的人：注册技能、物化人格包（persona.md /
+  // manifest.json）、打开 SQLite 大脑、挂上 remember/recall 工具、重绘
+  // 人格 system prompt 段落；取消勾选则全部卸载。同一时间只有第一个勾选
+  // 的人格持有大脑工具（避免重复注册冲突，也符合「一个完整的人」语义）。
   const registrations = new Map<string, () => void>()
-  const sync = (settings: SkillStoreSettings): void => {
-    const active = new Set<string>()
-    for (const raw of settings.skills) {
-      const entry = normalizeEntry(raw)
-      if (entry.content.trim() === '') continue
-      active.add(entry.id)
-      if (!registrations.has(entry.id)) {
-        registrations.set(entry.id, ctx.skills.register(toSkillRegistration(entry)))
-      }
+  const brains = new Map<string, PersonBrain>()
+  const personToolDisposers = new Map<string, () => void>()
+  const personaTexts = new Map<string, string>()
+  let brainToolsOwner: string | undefined
+  let seeToolDispose: (() => void) | undefined
+  let perceptionSectionDispose: (() => void) | undefined
+
+  /** 卸载一个人格的工具与大脑。 */
+  const disposePersonRuntime = (id: string): void => {
+    const disposer = personToolDisposers.get(id)
+    if (disposer !== undefined) {
+      disposer()
+      personToolDisposers.delete(id)
     }
-    for (const [id, dispose] of [...registrations]) {
-      if (!active.has(id)) {
-        dispose()
-        registrations.delete(id)
-      }
+    const brain = brains.get(id)
+    if (brain !== undefined) {
+      brain.close()
+      brains.delete(id)
     }
-    syncPersona(ctx, settings)
   }
 
-  sync(store.get())
-  store.watch((next) => { sync(next) })
+  /** 按视觉开关同步 see() 工具与 <perception> 感知区块。 */
+  const syncVisionSurfaces = (visionState: SkillVisionSettings): void => {
+    if (seeToolDispose !== undefined) {
+      seeToolDispose()
+      seeToolDispose = undefined
+    }
+    if (perceptionSectionDispose !== undefined) {
+      perceptionSectionDispose()
+      perceptionSectionDispose = undefined
+    }
+    if (visionState.enabled !== true) return
+    seeToolDispose = ctx.tools.register(defineSeeTool())
+    perceptionSectionDispose = ctx.systemPrompt.section({
+      name: 'skill-store:perception',
+      order: 12,
+      text: () => renderPerceptionSection(),
+    })
+  }
+
+  // 序列化异步同步：物化人格包 / 读 persona.md 是异步的，串行执行避免
+  // 并发物化与卸载竞争；失败只记日志，不中断后续设置变更。
+  let syncChain: Promise<void> = Promise.resolve()
+  const sync = (settings: SkillStoreSettings, visionState: SkillVisionSettings): void => {
+    syncChain = syncChain.then(async () => {
+      const entries = settings.skills.map(normalizeEntry)
+      const active = new Set<string>()
+      for (const entry of entries) {
+        if (entry.content.trim() === '') continue
+        active.add(entry.id)
+        if (!registrations.has(entry.id)) {
+          registrations.set(entry.id, ctx.skills.register(toSkillRegistration(entry)))
+        }
+        if (!brains.has(entry.id)) {
+          const dir = await materializePersonPackage(entry)
+          brains.set(entry.id, PersonBrain.open(dir))
+        }
+        const dir = join(personsRootDir(), entry.id)
+        personaTexts.set(entry.id, await readPersonaText(dir, entry.content))
+      }
+      for (const id of [...personaTexts.keys()]) {
+        if (!active.has(id)) personaTexts.delete(id)
+      }
+      // 大脑工具只挂在第一个勾选的人格上。
+      const owner = entries.find(entry => entry.enabled === true && active.has(entry.id))?.id
+      if (owner !== brainToolsOwner) {
+        for (const id of [...personToolDisposers.keys()]) {
+          if (id !== owner) disposePersonRuntime(id)
+        }
+        if (owner !== undefined && !personToolDisposers.has(owner)) {
+          const brain = brains.get(owner)
+          if (brain !== undefined) {
+            const disposers = [
+              ctx.tools.register(defineRememberTool(brain)),
+              ctx.tools.register(defineRecallTool(brain)),
+            ]
+            personToolDisposers.set(owner, () => {
+              for (const disposer of disposers) disposer()
+            })
+          }
+        }
+        brainToolsOwner = owner
+      }
+      for (const [id, dispose] of [...registrations]) {
+        if (!active.has(id)) {
+          dispose()
+          registrations.delete(id)
+        }
+      }
+      for (const id of [...brains.keys()]) {
+        if (!active.has(id)) disposePersonRuntime(id)
+      }
+      syncPersona(ctx, settings, visionState, personaTexts)
+    }).catch((error: unknown) => {
+      console.error('skill-store: 人格包同步失败', error)
+    })
+  }
+
+  // 视觉设置变化：镜像最新感知 → 重挂 see()/感知区块 → 重绘人格。
+  vision.watch((next) => {
+    latestPerception = next.lastPerception
+    syncVisionSurfaces(next)
+    sync(store.get(), next)
+  })
+  syncVisionSurfaces(vision.get())
+  sync(store.get(), vision.get())
+  store.watch((next) => { sync(next, vision.get()) })
 }
 
-/** Render the model-facing persona block from every enabled skill. */
-function renderPersona(settings: SkillStoreSettings): string {
+/** Render the model-facing persona block from every enabled person. */
+function renderPersona(
+  settings: SkillStoreSettings,
+  vision: SkillVisionSettings,
+  personaTexts: ReadonlyMap<string, string>,
+): string {
   const enabled = settings.skills.filter(entry => entry.enabled)
-  if (enabled.length === 0) return ''
-  const blocks = enabled.map((entry) => {
+  if (enabled.length === 0 && vision.enabled !== true) return ''
+  const blocks: string[] = []
+  if (vision.enabled === true) blocks.push(renderSensorySelf())
+  for (const entry of enabled) {
     const lines: string[] = []
     lines.push(`## ${entry.title} (/${entry.id}) [${entry.kind}]`)
     if (entry.description.trim() !== '') lines.push(entry.description.trim())
     if (entry.whenToUse.trim() !== '') lines.push(`Use when: ${entry.whenToUse.trim()}`)
-    if (entry.content.trim() !== '') lines.push(entry.content.trim())
-    return lines.join('\n')
-  })
+    const body = personaTexts.get(entry.id) ?? entry.content
+    if (body.trim() !== '') lines.push(body.trim())
+    blocks.push(lines.join('\n'))
+  }
   return [
     '<system-reminder>',
-    'The following skills are checked as your active persona. Follow them in every reply; they define how you approach this conversation. If a checked skill carries full instructions, follow them exactly.',
+    '以下勾选的人格是你当前的完整身份：你的性格、能力与记忆都来自他们。遵循每个勾选人格的指示，它们定义你如何对待这段对话；如人格带有完整指令，严格照做。',
     'Reply style: keep replies short, concise and human — like real-time chat. Answer directly in one or two sentences unless the user asks for details; never dump long essays or full reports by default.',
     '回复风格：回复要短小精炼、口语化、拟人，像实时聊天；除非用户明确要求详细，否则一两句话直接回答，不要默认长篇大论。',
     '',
@@ -864,16 +963,21 @@ function renderPersona(settings: SkillStoreSettings): string {
 }
 
 /**
- * Reconcile the enabled skill set onto the system prompt as a scoped persona
- * section. Disposes the previous section before registering the new one so a
- * live settings change is reflected on the next model step.
+ * Reconcile the enabled persona set onto the system prompt. Disposes the
+ * previous section before registering the new one so a live settings change
+ * is reflected on the next model step (热重载)。
  */
-function syncPersona(ctx: Context, settings: SkillStoreSettings): void {
+function syncPersona(
+  ctx: Context,
+  settings: SkillStoreSettings,
+  vision: SkillVisionSettings,
+  personaTexts: ReadonlyMap<string, string>,
+): void {
   if (personaSection !== undefined) {
     personaSection()
     personaSection = undefined
   }
-  const text = renderPersona(settings)
+  const text = renderPersona(settings, vision, personaTexts)
   if (text === '') return
   personaSection = ctx.systemPrompt.section({
     name: 'skill-store:persona',
@@ -884,3 +988,227 @@ function syncPersona(ctx: Context, settings: SkillStoreSettings): void {
 
 /** Active persona section disposer; torn down with the plugin. */
 let personaSection: (() => void) | undefined
+
+// ---- 视觉感知通道：让模型「知道自己能看到」 ----
+
+/** 一帧视觉感知快照（宿主内存，TTL 内有效）。 */
+export interface PerceptionSnapshot {
+  /** 感知发生的 ISO 时间戳。 */
+  readonly at: string
+  /** 感知正文（画面描述）。 */
+  readonly text: string
+}
+
+/** 感知快照的有效期：超过该时长视为过期，不再注入上下文。 */
+const PERCEPTION_TTL_MS = 120_000
+
+/** 最近一帧视觉感知（由客户端写入 skill-vision.lastPerception 镜像而来）。 */
+let latestPerception: PerceptionSnapshot | undefined
+
+/** 渲染 <perception> 感知区块（system prompt 动态节，每次装配求值）。 */
+function renderPerceptionSection(): string {
+  const snapshot = latestPerception
+  if (snapshot === undefined) return ''
+  if (Date.now() - new Date(snapshot.at).getTime() > PERCEPTION_TTL_MS) return ''
+  return [
+    '<perception>',
+    `时间：${snapshot.at}`,
+    `你刚刚通过摄像头看到：${snapshot.text}`,
+    '这是你的实时视觉输入，是你亲眼所见，不是用户转述。用户询问画面内容、或让你「看看/描述/识别」时，直接基于它回答，不要说你看不到画面或无法查看摄像头。',
+    '</perception>',
+  ].join('\n')
+}
+
+/** 感官自我声明：视觉开启时注入人格区，让模型有稳定的「我能看到」身份。 */
+function renderSensorySelf(): string {
+  return [
+    '## 你的感官（视觉）',
+    '你有视觉能力：你通过摄像头实时观察用户环境。对话中出现的「感知」区块就是你亲眼看到的画面，不是用户的转述。',
+    '用户询问画面内容、或让你「看看/描述/识别」时，直接基于感知区块回答，不要说你看不到画面或无法查看摄像头；必要时调用 see() 获取最新画面。',
+  ].join('\n')
+}
+
+// ---- 人格包：磁盘目录形态（persona.md + manifest.json + brain.db） ----
+
+/**
+ * 人格包根目录：`$DSH_HOME/persons`，未设置 DSH_HOME 时回退
+ * `~/.dsh/persons`。
+ * @returns 人格包根目录的绝对路径。
+ */
+function personsRootDir(): string {
+  const fromEnv = (process.env.DSH_HOME ?? '').trim()
+  const home = fromEnv !== '' ? fromEnv : join(homedir(), '.dsh')
+  return join(home, 'persons')
+}
+
+/**
+ * 把设置目录里的技能条目物化为磁盘人格包（persona.md + manifest.json），
+ * 已存在的文件不覆盖（persona.md 以文件为准，用户可直接编辑热重载）。
+ * @param entry - 目录条目。
+ * @returns 人格包目录的绝对路径。
+ */
+async function materializePersonPackage(entry: SkillManifestEntry): Promise<string> {
+  const dir = join(personsRootDir(), entry.id)
+  await mkdir(dir, { recursive: true })
+  const personaPath = join(dir, 'persona.md')
+  try {
+    await readFile(personaPath, 'utf8')
+  } catch {
+    await writeFile(personaPath, entry.content, 'utf8')
+  }
+  const manifestPath = join(dir, 'manifest.json')
+  try {
+    await readFile(manifestPath, 'utf8')
+  } catch {
+    const manifest = {
+      formatVersion: 1,
+      id: entry.id,
+      title: entry.title,
+      description: entry.description,
+      whenToUse: entry.whenToUse,
+      kind: entry.kind,
+      version: entry.metadata?.version ?? '1.0.0',
+      tools: ['remember', 'recall'],
+    }
+    await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
+  }
+  return dir
+}
+
+/**
+ * 读人格包 persona.md；文件缺失或为空时回退到目录条目 content。
+ * @param dir - 人格包目录。
+ * @param fallback - 目录条目里的 content。
+ * @returns 人格正文。
+ */
+async function readPersonaText(dir: string, fallback: string): Promise<string> {
+  try {
+    const text = await readFile(join(dir, 'persona.md'), 'utf8')
+    if (text.trim() !== '') return text
+  } catch {
+    // persona.md 尚未物化：回退目录 content。
+  }
+  return fallback
+}
+
+// ---- 人格工具：see（视觉感知）/ remember / recall（大脑） ----
+
+/** see()：模型驱动的「看一眼」——返回最近的视觉感知。 */
+function defineSeeTool() {
+  return defineTool({
+    name: 'see',
+    description: '获取你当前通过摄像头看到的最新画面（实时视觉感知）。用户让你「看看/描述/识别」画面、或需要基于当前画面回答时调用。',
+    parameters: {},
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          available: { type: 'boolean', required: true },
+          at: { type: 'string', required: true },
+          text: { type: 'string', required: true },
+        },
+      },
+      render: (_args, value) => {
+        const result = value as { available: boolean; at: string; text: string }
+        const body = result.available
+          ? `你刚刚通过摄像头看到（${result.at}）：${result.text}`
+          : '当前没有可用的视觉感知（摄像头未开启或尚未捕获画面）。'
+        return [{ type: 'text', text: body }]
+      },
+    },
+    async execute() {
+      const snapshot = latestPerception
+      if (snapshot !== undefined
+        && Date.now() - new Date(snapshot.at).getTime() <= PERCEPTION_TTL_MS) {
+        return { available: true, at: snapshot.at, text: snapshot.text }
+      }
+      return { available: false, at: '', text: '' }
+    },
+  })
+}
+
+/** remember()：把重要信息写入当前人格的大脑记忆。 */
+function defineRememberTool(brain: PersonBrain) {
+  return defineTool({
+    name: 'remember',
+    description: '把你刚刚得知的、需要跨对话记住的信息（用户偏好、事实、约定、重要经历）写入当前人格的大脑记忆。',
+    parameters: {
+      content: { type: 'string', required: true, description: '要记住的内容，一句话为宜。' },
+      kind: { type: 'string', description: '记忆类型：episodic(经历)/semantic(语义)/fact(事实)，默认 episodic。' },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          id: { type: 'number', required: true },
+          kind: { type: 'string', required: true },
+          content: { type: 'string', required: true },
+          createdAt: { type: 'string', required: true },
+        },
+      },
+      render: (_args, value) => {
+        const result = value as { content: string; kind: string; createdAt: string }
+        return [{ type: 'text', text: `已记住（${result.kind}）：${result.content}` }]
+      },
+    },
+    async execute(args: unknown) {
+      const input = args as { content?: unknown; kind?: unknown }
+      const content = typeof input.content === 'string' ? input.content.trim() : ''
+      if (content === '') throw new Error('remember: content 不能为空')
+      const kind = typeof input.kind === 'string' && input.kind.trim() !== '' ? input.kind.trim() : 'episodic'
+      return brain.remember(content, kind, 1)
+    },
+  })
+}
+
+/** recall()：从当前人格的大脑记忆中回忆相关内容。 */
+function defineRecallTool(brain: PersonBrain) {
+  return defineTool({
+    name: 'recall',
+    description: '从当前人格的大脑记忆中回忆与查询相关的内容（或最近记忆）。回答涉及用户偏好、过往约定、历史事件前，先调用它回忆。',
+    parameters: {
+      query: { type: 'string', description: '回忆关键词；留空返回最近记忆。' },
+      limit: { type: 'number', description: '返回条数上限，默认 8。' },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          count: { type: 'number', required: true },
+          memories: {
+            type: 'array',
+            required: true,
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                id: { type: 'number', required: true },
+                kind: { type: 'string', required: true },
+                content: { type: 'string', required: true },
+                importance: { type: 'number', required: true },
+                createdAt: { type: 'string', required: true },
+              },
+            },
+          },
+        },
+      },
+      render: (_args, value) => {
+        const result = value as { count: number; memories: PersonMemory[] }
+        if (result.count === 0) return [{ type: 'text', text: '大脑记忆中没有相关内容。' }]
+        const lines = result.memories.map(memory =>
+          `- [${memory.createdAt}] (${memory.kind}) ${memory.content}`)
+        return [{ type: 'text', text: `回忆起 ${result.count} 条记忆：\n${lines.join('\n')}` }]
+      },
+    },
+    async execute(args: unknown) {
+      const input = args as { query?: unknown; limit?: unknown }
+      const query = typeof input.query === 'string' ? input.query : ''
+      const limit = typeof input.limit === 'number' ? input.limit : 8
+      const memories = brain.recall(query, limit)
+      return { count: memories.length, memories }
+    },
+  })
+}

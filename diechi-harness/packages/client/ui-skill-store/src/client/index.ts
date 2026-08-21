@@ -911,6 +911,17 @@ class SkillStoreController {
   }
 
   /**
+   * 把一帧画面描述发布为宿主侧「视觉感知」：经 skill-vision.lastPerception
+   * 镜像到内存，供 <perception> 系统区块与 see() 工具读取（TTL 内有效）。
+   * @param text - 画面描述（模型看到的内容）。
+   */
+  async publishPerception(text: string): Promise<void> {
+    const trimmed = text.trim()
+    if (trimmed === '') return
+    await this.visionScope.set('lastPerception', { at: new Date().toISOString(), text: trimmed })
+  }
+
+  /**
    * Build the face the section's slot registration injects.
    * @returns the snapshot hooks and the store actions.
    */
@@ -926,6 +937,7 @@ class SkillStoreController {
       runLiveChatFrameStream: (frame, text, onDelta) => this.runLiveChatFrameStream(frame, text, onDelta),
       interruptVisionChat: () => this.interruptVisionChat(),
       resetVisionSession: () => this.resetVisionSession(),
+      publishPerception: (text) => this.publishPerception(text),
       sendCameraObservation: (context) => this.sendCameraObservation(context),
       transcribeAudio: (blob) => this.transcribeMic(blob),
       stopSpeaking: () => this.stopSpeaking(),

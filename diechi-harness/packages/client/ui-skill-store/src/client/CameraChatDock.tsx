@@ -40,7 +40,9 @@ export interface CameraChatDockInjected {
   interruptVisionChat(): Promise<void>
   /** Close the server-side camera chat session. */
   resetVisionSession(): Promise<void>
-  /** Send the camera observation as context into the current conversation. */
+  /** Publish one frame description as the host-side vision perception. */
+  publishPerception(text: string): Promise<void>
+  /** Send a light cue into the current conversation to trigger a model turn. */
   sendCameraObservation(context: string): Promise<boolean>
   /** Transcribe one recorded speech blob through the configured ASR service. */
   transcribeAudio(blob: Blob): Promise<string | undefined>
@@ -68,10 +70,12 @@ const SPEECH_DEBOUNCE_FRAMES = 2
 const MAX_SEGMENT_MS = 15_000
 /** Silence (ms) that ends one spoken sentence. */
 const SILENCE_MS = 900
+/** 感知发布的最小间隔：周期性画面描述限流写入，避免频繁刷设置。 */
+const PERCEPTION_PUBLISH_MIN_MS = 30_000
 /** Render the camera chat toggle row, then the live preview + caption panel. */
 export function CameraChatDock({
   t, useVision, runLiveChatFrameStream, interruptVisionChat, resetVisionSession,
-  sendCameraObservation, transcribeAudio, stopSpeaking, useInput, inputActions,
+  publishPerception, sendCameraObservation, transcribeAudio, stopSpeaking, useInput, inputActions,
 }: CameraChatDockProps) {
   const vision = useVision(value => value)
   const draft = useInput(state => state.draft)
@@ -86,6 +90,7 @@ export function CameraChatDock({
   const videoRef = useRef<HTMLVideoElement>(null)
   const streamRef = useRef<MediaStream>()
   const historyRef = useRef<CameraChatTurn[]>([])
+  const lastPerceptionPublishRef = useRef(0)
   const captionRef = useRef('')
   const timerRef = useRef<number | undefined>(undefined)
   const autoTimerRef = useRef<number | undefined>(undefined)
@@ -197,6 +202,12 @@ export function CameraChatDock({
       historyRef.current = [...historyRef.current.slice(-(MAX_HISTORY - 2)), { role: 'assistant', content: reply }]
       captionRef.current = reply.trim()
       setCaption(reply.trim())
+      // 周期画面描述也发布为视觉感知（限流），让主 LLM 保持「看着画面」。
+      const now = Date.now()
+      if (now - lastPerceptionPublishRef.current >= PERCEPTION_PUBLISH_MIN_MS) {
+        lastPerceptionPublishRef.current = now
+        void publishPerception(reply.trim()).catch(() => {})
+      }
     }
   }
 
@@ -218,7 +229,11 @@ export function CameraChatDock({
     sendingRef.current = true
     setSending(true)
     try {
-      const ok = await sendCameraObservation(t('cameraChatContext').replace('{caption}', text))
+      // 描述走「视觉感知」通道（宿主 <perception> 区块 + see()），对话里
+      // 只发一条轻量提示触发模型回合——模型基于自己「看到」的画面回答。
+      lastPerceptionPublishRef.current = Date.now()
+      await publishPerception(text)
+      const ok = await sendCameraObservation(t('cameraChatContext'))
       if (!ok) setError(t('cameraChatSendFailed'))
     } finally {
       sendingRef.current = false

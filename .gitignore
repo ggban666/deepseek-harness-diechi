@@ -42,3 +42,6 @@ CLAUDE.local.md
 /diechi-app/
 /package.json
 /pnpm-lock.yaml
+
+# diechi-skill runtime memory
+diechi-skill/memory/brain.db
