@@ -287,6 +287,8 @@
     { "path": "./packages/host/directory-picker-native" },
     { "path": "./packages/host/frontend-static" },
     { "path": "./packages/host/plugin-inventory" },
+    { "path": "./packages/host/skill-store" },
+    { "path": "./packages/host/diechi-brain" },
     { "path": "./packages/host/webserver" },
     { "path": "./packages/sdk/client" },
     { "path": "./packages/sdk/protocol" },

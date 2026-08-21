@@ -73,6 +73,7 @@
     { "path": "./packages/client/ui-commands" },
     { "path": "./packages/client/ui-skill" },
     { "path": "./packages/client/ui-skill-store" },
+    { "path": "./packages/client/ui-diechi-brain" },
     { "path": "./packages/client/ui-subagent" },
     { "path": "./packages/client/ui-jobs" },
     { "path": "./packages/client/ui-directory-picker-browse" },

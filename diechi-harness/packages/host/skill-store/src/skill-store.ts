@@ -15,7 +15,7 @@
  * empty body would be a silent no-op. The store UI marks them until import or
  * the `skill-generate` tool fills them in.
  *
- * @module @deepseek-ai/dsh-web-app/skill-store
+ * @module @deepseek-ai/dsh-host-skill-store
  */
 
 import type { Context } from '@deepseek-ai/cordis'
@@ -37,6 +37,15 @@ export const name = 'skill-store'
 
 /** Services required before the catalog can bridge to the skill registry. */
 export const inject = ['settings', 'skills', 'systemPrompt', 'tools']
+
+// 消费方服务（可选）：diechi-brain 插件提供时，recall 合并全局实操阅历。
+declare module '@deepseek-ai/cordis' {
+  interface Context {
+    diechiBrain?: {
+      recallPractice(query: string, limit: number): PersonKnowledge[]
+    }
+  }
+}
 
 /** Settings namespace owning the installed skill catalog. */
 export const SKILL_STORE_NS = 'skill-store'
@@ -703,6 +712,10 @@ export function apply(ctx: Context): void {
   ctx.settings.register(settingsNamespace(SKILL_VOICE_NS), voiceSchema)
   ctx.settings.register(settingsNamespace(SKILL_TRAINING_NS), trainingSchema)
 
+  // 供消费插件（如 diechi-brain）注入的服务：平权技能目录与视觉配置作用域。
+  ctx.provide('skillStore', store as never)
+  ctx.provide('skillVision', vision as never)
+
   // Local skill market (商店): scan <dsh-home>/skill-market/ into a read-only
   // settings namespace the store page renders. The scan runs at boot and on
   // every conversation-side refresh (the skill-market-refresh tool), so new
@@ -831,16 +844,6 @@ export function apply(ctx: Context): void {
   // 的人格持有大脑工具（避免重复注册冲突，也符合「一个完整的人」语义）。
   const registrations = new Map<string, () => void>()
   const brains = new Map<string, PersonBrain>()
-  /** 打开（必要时创建）全局大脑；插件内惰性使用。 */
-  const ensureGlobalBrain = (): PersonBrain => {
-    if (globalBrain === undefined) {
-      globalBrain = PersonBrain.openGlobal()
-      console.log('skill-store: 全局大脑已打开 →', globalBrain.path)
-    }
-    return globalBrain
-  }
-  /** 已入库的视频实操（按 videoProcess.at 去重）。 */
-  const ingestedVideos = new Set<string>()
   const personToolDisposers = new Map<string, () => void>()
   const personaTexts = new Map<string, string>()
   let brainToolsOwner: string | undefined
@@ -914,7 +917,8 @@ export function apply(ctx: Context): void {
           if (brain !== undefined) {
             const disposers = [
               ctx.tools.register(defineRememberTool(brain)),
-              ctx.tools.register(defineRecallTool(brain)),
+              ctx.tools.register(defineRecallTool(brain, (query, limit) =>
+                ctx.diechiBrain?.recallPractice(query, limit) ?? [])),
             ]
             personToolDisposers.set(owner, () => {
               for (const disposer of disposers) disposer()
@@ -939,32 +943,10 @@ export function apply(ctx: Context): void {
   }
 
   // 视觉设置变化：镜像最新感知 → 重挂 see()/感知区块 → 重绘人格。
+  // （视频实操的入库由 diechi-brain 插件监听同一 skillVision 作用域完成，
+  //  本插件只负责让模型「知道自己在看」。）
   vision.watch((next) => {
-    console.log('[skill-store] vision.watch fired; videoProcess=', next.videoProcess !== undefined)
     latestPerception = next.lastPerception
-    // 视频投喂的实操过程：先入库全局大脑（#实操 阅历），勾选人格时再
-    // 同步到该人格大脑；同一视频（按 at 时间戳）只入库一次。
-    const pending = next.videoProcess
-    if (pending !== undefined && pending.process.trim() !== '') {
-      const key = 'video:' + pending.at
-      if (!ingestedVideos.has(key)) {
-        try {
-          const topic = '实操：' + (pending.name.trim() || '视频投喂')
-          const content = pending.process.trim()
-          // 1) 总是写入全局大脑（用户的现实阅历，#实操 标签）——不勾选人格也有归属；
-          // 2) 勾选人格时同步到该人格大脑，让人格拥有自己的实操知识。
-          ensureGlobalBrain().learn(topic, content, '实操')
-          if (brainToolsOwner !== undefined) {
-            brains.get(brainToolsOwner)?.learn(topic, content, '实操')
-          }
-          ingestedVideos.add(key)
-          console.log('skill-store: 视频实操已入库 → 全局大脑'
-            + (brainToolsOwner !== undefined ? ` + ${brainToolsOwner}` : ''), pending.name)
-        } catch (error) {
-          console.error('skill-store: 视频实操入库失败', error)
-        }
-      }
-    }
     syncVisionSurfaces(next)
     sync(store.get(), next)
   })
@@ -1045,9 +1027,6 @@ const PERCEPTION_TTL_MS = 120_000
 
 /** 最近一帧视觉感知（由客户端写入 skill-vision.lastPerception 镜像而来）。 */
 let latestPerception: PerceptionSnapshot | undefined
-
-/** 全局大脑（$DSH_HOME/brain.db）：用户跨人格共享的实操阅历库，惰性打开。 */
-let globalBrain: PersonBrain | undefined
 
 /** 渲染 <perception> 感知区块（system prompt 动态节，每次装配求值）。 */
 function renderPerceptionSection(): string {
@@ -1206,7 +1185,7 @@ function defineRememberTool(brain: PersonBrain) {
 }
 
 /** recall()：从当前人格的大脑记忆中回忆相关内容，并附带全局大脑的实操阅历。 */
-function defineRecallTool(brain: PersonBrain) {
+function defineRecallTool(brain: PersonBrain, getPractice: (query: string, limit: number) => PersonKnowledge[]) {
   return defineTool({
     name: 'recall',
     description: '回忆与查询相关内容：当前人格自己的记忆，以及你在全局大脑中的实操阅历（用户真实做过的实操，带 #实操 标签）。回答涉及用户偏好、过往约定、历史事件、实操经验前，先调用它回忆。',
@@ -1269,15 +1248,9 @@ function defineRecallTool(brain: PersonBrain) {
       const query = typeof input.query === 'string' ? input.query : ''
       const limit = typeof input.limit === 'number' ? input.limit : 8
       const memories = brain.recall(query, limit)
-      // 全局大脑的实操阅历并入召回（按更新时间倒序，最多 5 条），
+      // 全局大脑的实操阅历并入召回（由 diechi-brain 插件提供，最多 5 条），
       // 让人格能引用用户真实做过的实操，而不只是自己的记忆。
-      let practice: PersonKnowledge[] = []
-      if (globalBrain !== undefined) {
-        const all = globalBrain.recallKnowledge('', '实操').slice(0, 5)
-        practice = query.trim() === ''
-          ? all
-          : all.filter(item => item.topic.includes(query) || item.content.includes(query))
-      }
+      const practice = getPractice(query.trim(), limit)
       return { count: memories.length + practice.length, memories, practice }
     },
   })

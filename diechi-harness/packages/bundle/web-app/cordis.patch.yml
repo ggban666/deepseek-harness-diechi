@@ -106,11 +106,17 @@
     # waits for cmdlineArgs; no launcher metadata or special row kind is needed.
     - id: web-startup
       name: '@deepseek-ai/dsh-web-app/startup'
-
-    # Skill 商店 host row: bridges the skill.store / skill.vision settings
-    # namespaces onto the runtime skill registry (dsh-web-app/skill-store).
+    # Skill 商店 host row（独立插件）：bridges the skill.store / skill.vision
+    # settings namespaces onto the runtime skill registry，并提供 skillStore /
+    # skillVision 服务给 diechi-brain 等消费插件。
     - id: skill-store
-      name: '@deepseek-ai/dsh-web-app/skill-store'
+      name: '@deepseek-ai/dsh-host-skill-store'
+
+    # 全局大脑 host row（独立插件，可插拔）：监听 skillVision 的视频实操
+    # 投喂，自动写入 $DSH_HOME/brain.db（#实操 标签）并提供收件箱管理 RPC
+    # （list/ingest/assign/setTags/remove），供「阅历控制台」使用。
+    - id: diechi-brain
+      name: '@deepseek-ai/dsh-host-diechi-brain'
 
     # ── layer 2: transport/service ──────────────────────────────────────────────
 
@@ -237,6 +243,10 @@
 
     - id: ui-skill-store
       name: '@deepseek-ai/dsh-client-ui-skill-store'
+
+    # 阅历控制台：全局大脑实操收件箱的可视化管理（归位/改标签/删除）。
+    - id: ui-diechi-brain
+      name: '@deepseek-ai/dsh-client-ui-diechi-brain'
 
     - id: ui-subagent
       name: '@deepseek-ai/dsh-client-ui-subagent'

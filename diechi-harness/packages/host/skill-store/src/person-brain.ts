@@ -41,6 +41,10 @@ export interface PersonKnowledge {
   readonly content: string
   /** 标签（逗号分隔，如 "实操,8D"），用于区分实操/理论等来源。 */
   readonly tags: string
+  /** 阅历处置状态：pending（待归位）/ assigned（已归位）/ archived（已归档）。 */
+  readonly status: string
+  /** 自动归类的建议技能 id（空串表示无建议）。 */
+  readonly suggestedSkill: string
   /** 最近更新的 ISO 时间戳。 */
   readonly updatedAt: string
 }
@@ -65,6 +69,8 @@ CREATE TABLE IF NOT EXISTS knowledge (
   topic TEXT PRIMARY KEY,
   content TEXT NOT NULL,
   tags TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'pending',
+  suggested_skill TEXT NOT NULL DEFAULT '',
   updated_at TEXT NOT NULL
 );
 `
@@ -93,11 +99,19 @@ export class PersonBrain {
     mkdirSync(dir, { recursive: true })
     const db = new DatabaseSync(join(dir, 'brain.db'))
     db.exec(BRAIN_SCHEMA)
-    // 迁移：旧库 knowledge 表没有 tags 列时补列。
+    // WAL：多连接并发（人格大脑与全局大脑同文件）时读写互不阻塞。
     try {
-      db.exec('ALTER TABLE knowledge ADD COLUMN tags TEXT NOT NULL DEFAULT \'\'')
+      db.exec('PRAGMA journal_mode = WAL')
     } catch {
-      // 已存在（新库 CREATE 已含 tags），忽略。
+      // 只读文件系统等场景忽略，退回默认 journal。
+    }
+    // 迁移：旧库 knowledge 表补列（tags / status / suggested_skill）。
+    for (const column of ['tags TEXT NOT NULL DEFAULT \'\'', 'status TEXT NOT NULL DEFAULT \'pending\'', 'suggested_skill TEXT NOT NULL DEFAULT \'\'']) {
+      try {
+        db.exec(`ALTER TABLE knowledge ADD COLUMN ${column}`)
+      } catch {
+        // 已存在（新库 CREATE 已含），忽略。
+      }
     }
     return new PersonBrain(dir, db)
   }
@@ -199,6 +213,63 @@ export class PersonBrain {
     return rows.map(toKnowledge)
   }
 
+  /**
+   * 列出全局实操阅历（带 #实操 标签的知识），可按处置状态过滤。
+   * @param status - 可选过滤：pending / assigned / archived；空串不过滤。
+   * @param limit - 返回条数上限，默认 100。
+   * @returns 按更新时间倒序的实操行。
+   */
+  listPractice(status = '', limit = 100): PersonKnowledge[] {
+    this.assertOpen()
+    const safeLimit = Math.max(1, Math.min(500, Math.trunc(limit) || 100))
+    const rows = status.trim() === ''
+      ? this.db.prepare(
+        'SELECT topic, content, tags, status, suggested_skill, updated_at FROM knowledge '
+        + 'WHERE tags LIKE ? ORDER BY updated_at DESC LIMIT ?',
+      ).all('%实操%', safeLimit)
+      : this.db.prepare(
+        'SELECT topic, content, tags, status, suggested_skill, updated_at FROM knowledge '
+        + 'WHERE tags LIKE ? AND status = ? ORDER BY updated_at DESC LIMIT ?',
+      ).all('%实操%', status.trim(), safeLimit)
+    return rows.map(toKnowledge)
+  }
+
+  /**
+   * 更新一条实操的处置元数据（状态 / 建议技能 / 标签），并刷新 updated_at。
+   * @param topic - 知识主题键（精确匹配）。
+   * @param patch - 需要更新的字段。
+   * @returns 是否更新成功（主题不存在返回 false）。
+   */
+  setPracticeMeta(topic: string, patch: { status?: string; suggestedSkill?: string; tags?: string }): boolean {
+    this.assertOpen()
+    const clean = topic.trim()
+    if (clean === '') return false
+    const current = this.db.prepare('SELECT topic FROM knowledge WHERE topic = ?').get(clean)
+    if (current === undefined) return false
+    const fields: string[] = []
+    const values: Array<string | number> = []
+    if (patch.status !== undefined) { fields.push('status = ?'); values.push(patch.status.trim() || 'pending') }
+    if (patch.suggestedSkill !== undefined) { fields.push('suggested_skill = ?'); values.push(patch.suggestedSkill.trim()) }
+    if (patch.tags !== undefined) { fields.push('tags = ?'); values.push(patch.tags.trim()) }
+    fields.push('updated_at = ?')
+    values.push(new Date().toISOString())
+    this.db.prepare(`UPDATE knowledge SET ${fields.join(', ')} WHERE topic = ?`).run(...values, clean)
+    return true
+  }
+
+  /**
+   * 删除一条知识（收件箱移除 / 误入清理）。
+   * @param topic - 知识主题键（精确匹配）。
+   * @returns 是否删除成功。
+   */
+  removeKnowledge(topic: string): boolean {
+    this.assertOpen()
+    const clean = topic.trim()
+    if (clean === '') return false
+    const result = this.db.prepare('DELETE FROM knowledge WHERE topic = ?').run(clean)
+    return Number(result.changes) > 0
+  }
+
   /** 关闭数据库；关闭后任何读写都会抛错。 */
   close(): void {
     if (this.closed) return
@@ -235,6 +306,8 @@ function toKnowledge(row: Record<string, unknown>): PersonKnowledge {
     topic: String(row.topic),
     content: String(row.content),
     tags: String(row.tags ?? ''),
+    status: String(row.status ?? 'pending'),
+    suggestedSkill: String(row.suggested_skill ?? ''),
     updatedAt: String(row.updated_at),
   }
 }
