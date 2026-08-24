@@ -968,11 +968,14 @@ export function apply(ctx: Context): void {
           const brain = brains.get(owner)
           if (brain !== undefined) {
             const disposers = [
-              ctx.tools.register(defineRememberTool(brain)),
-              ctx.tools.register(defineRecallTool(brain, (query, limit) =>
-                ctx.diechiBrain?.recallPractice(query, limit) ?? [])),
-              ctx.tools.register(defineSceneTool(brain)),
-              ctx.tools.register(defineRecallScenesTool(brain)),
+              // 工具不捕获 brain 实例，而是执行时从 brains 现取：勾选状态切换
+              // （owner 变更/取消勾选）会 close 旧 brain，若工具闭包仍持有旧实例，
+              // 调用即抛 "person brain is closed"。现取则拿到最新实例或 undefined。
+              ctx.tools.register(defineRememberTool(() => brains.get(owner))),
+              ctx.tools.register(defineRecallTool(() => brains.get(owner), (query, limit) =>
+                ctx.get('diechiBrain')?.recallPractice(query, limit) ?? [])),
+              ctx.tools.register(defineSceneTool(() => brains.get(owner))),
+              ctx.tools.register(defineRecallScenesTool(() => brains.get(owner))),
               ctx.tools.register(defineCorrectKnowledgeTool(globalBrain)),
               ctx.tools.register(defineDistillPracticeTool(
                 ctx,
@@ -1148,7 +1151,7 @@ const pendingTurns = new Map<string, { user: string; assistant: string }>()
 let personaSection: (() => void) | undefined
 
 /** remember-scene()：把当前看到的画面写入视觉记忆时间线（高频画面理解用，同画面自动合并）。 */
-function defineSceneTool(brain: PersonBrain) {
+function defineSceneTool(getBrain: () => PersonBrain | undefined) {
   return defineTool({
     name: 'remember-scene',
     description: '把你刚刚看到的画面场景写入当前人格的视觉记忆时间线（同画面在 90 秒内自动合并为一条场景，不会重复入库）。摄像头开启时每帧画面变化都应调用：用一句话结构化描述画面（人物/物体/动作/变化），这是你「持续在看」的记忆来源。',
@@ -1178,13 +1181,18 @@ function defineSceneTool(brain: PersonBrain) {
       const content = typeof input.content === 'string' ? input.content.trim() : ''
       if (content === '') throw new Error('remember-scene: content 不能为空')
       const fingerprint = typeof input.fingerprint === 'string' ? input.fingerprint : ''
+      // 现取大脑实例：勾选切换时旧实例已被 close，拿到最新实例或明确报错。
+      const brain = getBrain()
+      if (brain === undefined) {
+        throw new Error('remember-scene: 人格大脑暂不可用（勾选状态切换中），请稍后重试')
+      }
       return brain.seeScene(content, fingerprint)
     },
   })
 }
 
 /** recall-scenes()：按时间窗 / 关键词检索视觉记忆时间线。 */
-function defineRecallScenesTool(brain: PersonBrain) {
+function defineRecallScenesTool(getBrain: () => PersonBrain | undefined) {
   return defineTool({
     name: 'recall-scenes',
     description: '回忆你之前通过摄像头看到过的画面（视觉记忆时间线）。用户问「你刚才看到什么/有没有看到某个东西」时调用，可指定最近时间范围。',
@@ -1233,6 +1241,10 @@ function defineRecallScenesTool(brain: PersonBrain) {
         ? Date.now() - input.sinceMinutes * 60_000
         : 0
       const limit = typeof input.limit === 'number' ? input.limit : 20
+      const brain = getBrain()
+      if (brain === undefined) {
+        return { count: 0, scenes: [] }
+      }
       const scenes = brain.recallScenes(sinceMs, query, limit)
       return { count: scenes.length, scenes }
     },
@@ -1847,7 +1859,7 @@ function defineSeeTool() {
 }
 
 /** remember()：把重要信息写入当前人格的大脑记忆。 */
-function defineRememberTool(brain: PersonBrain) {
+function defineRememberTool(getBrain: () => PersonBrain | undefined) {
   return defineTool({
     name: 'remember',
     description: '写入一条跨对话记忆。**只记用户明确说过的内容**（「我喜欢…」「我是…」「我的…是…」「记住…」等原话表达的信息），'
@@ -1884,6 +1896,10 @@ function defineRememberTool(brain: PersonBrain) {
       // 幻觉防线：记忆内容以「用户…」猜测句式开头（模型推断而非用户陈述）时拒绝写入。
       if (/^(用户(应该|可能|大概|似乎|估计|好像|或许|也许)|我猜|我觉得用户|推测)/.test(content)) {
         return { id: 0, kind, content, importance: 0, source: 'rejected-hallucination', topic: '', createdAt: '' }
+      }
+      const brain = getBrain()
+      if (brain === undefined) {
+        throw new Error('remember: 人格大脑暂不可用（勾选状态切换中），请稍后重试')
       }
       return brain.remember(content, kind, 1)
     },
@@ -2170,7 +2186,7 @@ async function tidyBrains(
 }
 
 /** recall()：从当前人格的大脑记忆中回忆相关内容，并附带全局大脑的实操阅历。 */
-function defineRecallTool(brain: PersonBrain, getPractice: (query: string, limit: number) => PersonKnowledge[]) {
+function defineRecallTool(getBrain: () => PersonBrain | undefined, getPractice: (query: string, limit: number) => PersonKnowledge[]) {
   return defineTool({
     name: 'recall',
     description: '回忆与查询相关内容：当前人格自己的记忆，以及你在全局大脑中的实操阅历（用户真实做过的实操，带 #实操 标签）。回答涉及用户偏好、过往约定、历史事件、实操经验前，先调用它回忆。',
@@ -2232,6 +2248,10 @@ function defineRecallTool(brain: PersonBrain, getPractice: (query: string, limit
       const input = args as { query?: unknown; limit?: unknown }
       const query = typeof input.query === 'string' ? input.query : ''
       const limit = typeof input.limit === 'number' ? input.limit : 8
+      const brain = getBrain()
+      if (brain === undefined) {
+        return { count: 0, memories: [], practice: [] }
+      }
       const memories = brain.recall(query, limit)
       // 全局大脑的实操阅历并入召回（由 diechi-brain 插件提供，最多 5 条），
       // 让人格能引用用户真实做过的实操，而不只是自己的记忆。
