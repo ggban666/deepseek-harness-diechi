@@ -13,7 +13,9 @@ export type { TypertClientRemote as ClientRemote } from '@deepseek-ai/dsh-typert
 export type { PluginInventorySnapshot } from '@deepseek-ai/dsh-host-plugin-inventory/types'
 export type {
   BrainAssignInput, BrainAssignResult, BrainIngestInput, BrainInboxSnapshot,
-  BrainPracticeItem, BrainRemoveInput, BrainTagsInput,
+  BrainPracticeItem, BrainRemoveInput, BrainTagsInput, SkillOverviewEntry, SkillOverviewSnapshot,
+  BrainGraphInput, BrainGraphSnapshot, BrainGraphNode, BrainGraphEdge,
+  BrainPendingMemory, BrainPendingMemoriesSnapshot, BrainMemoryActionInput, BrainMemoryActionResult,
 } from '@deepseek-ai/dsh-host-diechi-brain/types'
 export type {} from '@deepseek-ai/dsh-commands/remote'
 export type {} from '@deepseek-ai/dsh-goal/remote'
@@ -114,7 +116,12 @@ export async function apply(ctx: Context): Promise<() => Promise<void>> {
     for (const contribution of [
       commandsRemote, goalsRemote, dynamicRemote, pluginInventoryRemote, messageFeedbackRemote, diechiBrainRemote,
     ]) {
-      disposers.push(await ctx.remote.$mount(contribution))
+      try {
+        disposers.push(await ctx.remote.$mount(contribution))
+      } catch (error) {
+        console.error('[api-remotes] mount failed', contribution.package, error)
+        throw error
+      }
     }
   } catch (error) {
     for (const dispose of disposers.reverse()) await dispose()

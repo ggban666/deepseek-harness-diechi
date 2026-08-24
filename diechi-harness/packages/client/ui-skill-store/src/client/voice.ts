@@ -47,6 +47,49 @@ export const VOICE_LOCAL_VOICES = [
 /** Sample sentence used by the 试听 (preview) button. */
 export const VOICE_SAMPLE_TEXT = '蝴蝶振翅，一念换天。你好，我是蝶翅。'
 
+/** One selectable TTS provider preset row (endpoint/model/voice hints). */
+export interface VoicePreset {
+  readonly id: string
+  /** Locale key for the preset label. */
+  readonly label: 'voicePresetLocal' | 'voicePresetMiniMax' | 'voicePresetSiliconFlow' | 'voicePresetFish' | 'voicePresetOpenAI'
+  /** Maps to the OpenAI-compatible provider (all cloud presets share /v1/audio/speech). */
+  readonly provider: VoiceState['provider']
+  /** Base URL the preset fills in (service endpoint or API base). */
+  readonly endpoint: string
+  /** Model name the preset fills in. */
+  readonly model: string
+  /** Voice id the preset fills in. */
+  readonly voice: string
+}
+
+/** 语音供应商预设：本机 Kokoro + 常用云端 TTS（均 OpenAI 兼容 /v1/audio/speech）。 */
+export const VOICE_PRESETS: readonly VoicePreset[] = [
+  { id: 'local', label: 'voicePresetLocal', provider: 'local', endpoint: VOICE_DEFAULT_ENDPOINT, model: '', voice: VOICE_DEFAULT_VOICE },
+  { id: 'minimax', label: 'voicePresetMiniMax', provider: 'openai', endpoint: 'https://api.minimax.chat/v1', model: 'minimax-speech-01', voice: 'female-shaonv' },
+  { id: 'siliconflow', label: 'voicePresetSiliconFlow', provider: 'openai', endpoint: 'https://api.siliconflow.cn/v1', model: 'fishaudio/fish-speech-1.5', voice: 'fishaudio/fish-speech-1.5:alex' },
+  { id: 'fish', label: 'voicePresetFish', provider: 'openai', endpoint: 'https://api.fish.audio/v1', model: 'fishaudio/fish-speech-1.5', voice: '' },
+  { id: 'openai', label: 'voicePresetOpenAI', provider: 'openai', endpoint: 'https://api.openai.com/v1', model: 'gpt-4o-mini-tts', voice: 'alloy' },
+]
+
+/** 把长文本切成可独立合成的句子（伪流式：逐句请求、边收边播）。 */
+export function splitSpeechSentences(text: string): string[] {
+  const stops = new Set(['。', '！', '？', '；', '!', '?', ';', '\n'])
+  const parts: string[] = []
+  let buf = ''
+  for (const ch of text) {
+    buf += ch
+    if (stops.has(ch) && buf.trim().length >= 8) {
+      parts.push(buf.trim())
+      buf = ''
+    } else if (buf.length >= 46) {
+      parts.push(buf.trim())
+      buf = ''
+    }
+  }
+  if (buf.trim() !== '') parts.push(buf.trim())
+  return parts.length > 0 ? parts : [text]
+}
+
 /** Collect visible prose from one Assistant lifecycle (mirror of the conversation helper). */
 export function assistantText(blocks: readonly AssistantBlock[]): string {
   return blocks.flatMap(block => block.kind === 'text' ? [block.text] : []).join('')
@@ -278,7 +321,13 @@ export async function streamVoice(
 ): Promise<void> {
   if (signal?.aborted) throw new DOMException('aborted', 'AbortError')
   if (config.provider === "openai") {
-    onChunk(await synthesizeVoice(config, text))
+    // 伪流式：按句请求 OpenAI 兼容 /v1/audio/speech，逐句交给播放器顺序播放，
+    // 首句先出、其余边合成边播（真实 SSE 流式各厂商协议不统一，逐句是通用方案）。
+    const sentences = splitSpeechSentences(text)
+    for (const sentence of sentences) {
+      if (signal?.aborted) throw new DOMException('aborted', 'AbortError')
+      onChunk(await synthesizeVoice(config, sentence))
+    }
     return
   }
   const endpoint = (config.endpoint || VOICE_DEFAULT_ENDPOINT).replace(/\/+$/, "")

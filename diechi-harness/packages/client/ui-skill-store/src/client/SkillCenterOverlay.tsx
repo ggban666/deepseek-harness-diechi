@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 平权技能中心 full-screen surface (shell.overlay): one page, two tabs — 商店
  * (the local market catalog) and 工坊 (installed-skill management plus
  * creation/import). Rendered as a frame-wide page while open; renders
@@ -11,24 +11,32 @@ import type {
 } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SkillStoreKey } from './locales.ts'
 import type { SkillManifestEntry, SkillMarketSkill, TrainingState } from './skill-format.ts'
+import type { BrainPendingMemory, BrainPracticeItem, SkillOverviewSnapshot, BrainGraphSnapshot } from '@deepseek-ai/dsh-api-remotes/types'
 import type { SkillStoreState } from './SkillStoreSection.tsx'
 import {
   dateLabel, exportSkillDocument, kindLabel, sourceLabel, statusLabel,
   type ImportResult, type RetrainResult, type SkillDraft,
 } from './skill-display.ts'
+import { SkillCardWall } from './SkillCardWall.tsx'
+import { ExperiencesWall } from './ExperiencesWall.tsx'
+import { KnowledgeGraph } from './KnowledgeGraph.tsx'
 import css from './SkillCenterOverlay.module.css'
 
 /** One open surface of the skill center. */
-export type SkillCenterView = 'closed' | 'market' | 'workshop'
+export type SkillCenterView = 'closed' | 'skills' | 'experiences' | 'market' | 'workshop' | 'graph'
 
 /** Snapshot the center page renders. */
 export interface SkillCenterState {
   /** Active surface; 'closed' renders nothing. */
   readonly view: SkillCenterView
+  /** 侧边工坊面板是否展开（工坊已从全屏页移到侧边栏）。 */
+  readonly workshopOpen?: boolean
   /** Skill id the workshop focuses (retrain target). */
   readonly focusId?: string
   /** Recognition draft that prefills the workshop create form. */
   readonly createDraft?: SkillDraft
+  /** 当前知识图谱视图对应的 skillId；空串表示全局图谱。 */
+  readonly graphSkillId?: string
 }
 
 /** Market catalog snapshot the store page renders. */
@@ -77,10 +85,24 @@ export interface SkillCenterInjected {
     store: HostObservable<SkillStoreState>
     /** In-flight training session (训练模式). */
     training: HostObservable<TrainingState>
+    /** 技能库现状（每技能记忆/知识/实操条数 + 最近活动时间）。 */
+    overview: HostObservable<SkillOverviewSnapshot | undefined>
+    /** 实操阅历收件箱（#实操 相册流）。 */
+    practices: HostObservable<readonly BrainPracticeItem[]>
+    /** 知识图谱快照（graph 视图用）。 */
+    graphData: HostObservable<BrainGraphSnapshot>
+    /** 待确认记忆（自动除幻觉标记，需用户核对）。 */
+    pendingMemories: HostObservable<readonly BrainPendingMemory[]>
   }
-  open(view: 'market' | 'workshop', focusId?: string, createDraft?: SkillDraft): void
+  open(view: SkillCenterView, focusId?: string, createDraft?: SkillDraft): void
   /** Close the center page. */
   close(): void
+  /** 展开/收起侧边工坊面板（工坊现在住在侧边栏）。 */
+  toggleWorkshop(): void
+  /** 用草稿打开工坊创建表单（阅历新主题一键建技能）。 */
+  openCreateDraft(draft: SkillDraft): void
+  /** 清空工坊创建草稿（识别预填用完一次即清）。 */
+  clearWorkshopDraft(): void
   /** Re-read the market catalog from the host. */
   refreshMarket(): Promise<void>
   /** Install one market skill into the installed catalog. */
@@ -91,12 +113,34 @@ export interface SkillCenterInjected {
   removeSkill(id: string): Promise<void>
   /** Restore an older revision as the active body (workshop tab). */
   restoreRevision(id: string, version: string): Promise<void>
+  /** 一句话生成：直接在当前对话生成技能草稿，不进训练模式。 */
+  createSkill(input: CreateSkillInput): Promise<RetrainResult>
   /** Open the training conversation and activate the training banner. */
   startTraining(input: TrainingStartInput): Promise<RetrainResult>
   /** Ask the agent to finish the round and generate the new skill revision. */
   finishTraining(): Promise<RetrainResult>
   /** Abandon the round without generating (clears the banner). */
   cancelTraining(): void
+  /** 持久化勾选（=换人，结构级热重载）。 */
+  saveEnabled(updates: readonly { readonly id: string; readonly enabled: boolean }[]): Promise<void>
+  /** 刷新技能库现状快照（overview RPC）。 */
+  refreshOverview(): Promise<void>
+  /** 刷新实操阅历收件箱。 */
+  refreshExperiences(): Promise<void>
+  /** 一键归位：把实操写入指定技能的大脑。 */
+  assignPractice(topic: string, skillId: string): Promise<boolean>
+  /** 删除一条实操阅历。 */
+  removePractice(topic: string): Promise<boolean>
+  /** 确认一条待核对知识（低置信度归纳）：内容无误，可参与归位与注入。 */
+  confirmPractice(topic: string): Promise<boolean>
+  /** 刷新待确认记忆列表（自动除幻觉标记）。 */
+  refreshPendingMemories(): Promise<void>
+  /** 处置待确认记忆：confirm=true 解除标记（参与注入）；false 删除。 */
+  memoryAction(id: number, confirm: boolean): Promise<boolean>
+  /** 打开知识图谱视图（阅历页点技能卡触发；空串为全局图谱）。 */
+  openGraph(skillId: string): void
+  /** 关闭知识图谱视图。 */
+  closeGraph(): void
 }
 
 /** Props the renderer binds for the overlay entry. */
@@ -361,10 +405,8 @@ function InstalledSkillRow({
   )
 }
 
-/** Render one workshop tab over the installed catalog and creation entries. */
-function WorkshopTab({
-  t, store, createDraft, onDraftConsumed, onImport, onCopy, onRemove, onRestore, onStartTraining,
-}: {
+/** Workshop tab props, shared by the sidebar panel and the settings shortcut. */
+export interface WorkshopTabProps {
   t: (key: SkillStoreKey) => string
   store: SkillStoreState
   /** Recognition draft that prefills the create form, if any. */
@@ -375,17 +417,25 @@ function WorkshopTab({
   onCopy: (text: string) => Promise<void>
   onRemove: (id: string) => Promise<void>
   onRestore: (id: string, version: string) => Promise<void>
+  onCreateSkill: (input: CreateSkillInput) => Promise<RetrainResult>
   onStartTraining: (input: TrainingStartInput) => Promise<RetrainResult>
-}) {
+}
+
+/** Render one workshop tab over the installed catalog and creation entries. */
+export function WorkshopTab({
+  t, store, createDraft, onDraftConsumed, onImport, onCopy, onRemove, onRestore, onCreateSkill, onStartTraining,
+}: WorkshopTabProps) {
   const fileInputId = useId()
   const fileInput = useRef<HTMLInputElement>(null)
   const [notice, setNotice] = useState<Notice>()
   const [copiedId, setCopiedId] = useState<string>()
   const [createName, setCreateName] = useState('')
-  const [createPurpose, setCreatePurpose] = useState('')
+  const [createDescription, setCreateDescription] = useState('')
   const [createSteps, setCreateSteps] = useState('')
   const [createRules, setCreateRules] = useState('')
   const [createReferences, setCreateReferences] = useState('')
+  const [installedOpen, setInstalledOpen] = useState(false)
+  const [advancedOpen, setAdvancedOpen] = useState(false)
   const [createBusy, setCreateBusy] = useState(false)
   const [createNotice, setCreateNotice] = useState<Notice>()
 
@@ -393,7 +443,7 @@ function WorkshopTab({
   useEffect(() => {
     if (createDraft === undefined) return
     setCreateName(createDraft.name)
-    setCreatePurpose(createDraft.purpose)
+    setCreateDescription(createDraft.purpose)
     setCreateSteps(createDraft.steps)
     setCreateRules(createDraft.rules)
     onDraftConsumed()
@@ -449,27 +499,24 @@ function WorkshopTab({
   }
 
   const submitCreate = async (): Promise<void> => {
-    if (createBusy || createName.trim() === '' || createPurpose.trim() === '') return
+    if (createBusy || createDescription.trim() === '') return
     setCreateBusy(true)
     try {
-      const references = createReferences.trim()
-      const result = await onStartTraining({
-        mode: 'create',
-        skillTitle: createName.trim(),
-        description: [
-          createPurpose.trim(),
-          ...(createSteps.trim() === '' ? [] : [t('createPromptSteps').replace('{text}', createSteps.trim())]),
-          ...(createRules.trim() === '' ? [] : [t('createPromptRules').replace('{text}', createRules.trim())]),
-          ...(references === '' ? [] : [t('createPromptReferences').replace('{text}', references)]),
-        ].join('\n'),
+      const result = await onCreateSkill({
+        name: createName.trim(),
+        purpose: createDescription.trim(),
+        steps: createSteps.trim(),
+        rules: createRules.trim(),
+        references: createReferences.trim(),
       })
       if (result.ok) {
-        setCreateNotice({ kind: 'ok', text: t('trainingStarted') })
+        setCreateNotice({ kind: 'ok', text: t('createSent') })
         setCreateName('')
-        setCreatePurpose('')
+        setCreateDescription('')
         setCreateSteps('')
         setCreateRules('')
         setCreateReferences('')
+        setAdvancedOpen(false)
       } else if (result.error === 'no-session') {
         setCreateNotice({ kind: 'error', text: t('retrainNoSession') })
       } else {
@@ -486,90 +533,114 @@ function WorkshopTab({
     <div className={css.tab}>
       <p className={css.intro}>{t('workshopIntro')}</p>
       <section className={css.workshopCard}>
-        <h3 className={css.workshopTitle}>{t('installed')}</h3>
-        <p className={css.hint}>{t('workshopInstalledHint')}</p>
-        {store.skills.length === 0 ? <p className={css.empty}>{t('empty')}</p> : (
-          <ul className={css.wsList}>
-            {store.skills.map(skill => (
-              <InstalledSkillRow
-                key={skill.id}
-                t={t}
-                skill={skill}
-                writable={store.writable}
-                copiedId={copiedId}
-                onCopy={(id) => { void handleCopy(id) }}
-                onExport={handleExport}
-                onRestore={(entry, version) => { void handleRestore(entry, version) }}
-                onRemove={(entry) => { void handleRemove(entry) }}
-                onStartTraining={(input) => onStartTraining(input)}
-              />
-            ))}
-          </ul>
+        <button
+          type="button"
+          className={css.wsHead}
+          aria-expanded={installedOpen}
+          onClick={() => setInstalledOpen((open) => !open)}
+        >
+          <span className={css.workshopTitle}>{t('installed')}</span>
+          <span className={installedOpen ? css.wsChevronOpen : css.wsChevron} aria-hidden="true">▾</span>
+        </button>
+        {installedOpen && (
+          <>
+            <p className={css.hint}>{t('workshopInstalledHint')}</p>
+            {store.skills.length === 0 ? <p className={css.empty}>{t('empty')}</p> : (
+              <ul className={css.wsList}>
+                {store.skills.map(skill => (
+                  <InstalledSkillRow
+                    key={skill.id}
+                    t={t}
+                    skill={skill}
+                    writable={store.writable}
+                    copiedId={copiedId}
+                    onCopy={(id) => { void handleCopy(id) }}
+                    onExport={handleExport}
+                    onRestore={(entry, version) => { void handleRestore(entry, version) }}
+                    onRemove={(entry) => { void handleRemove(entry) }}
+                    onStartTraining={(input) => onStartTraining(input)}
+                  />
+                ))}
+              </ul>
+            )}
+          </>
         )}
       </section>
       <section className={css.workshopCard}>
         <h3 className={css.workshopTitle}>{t('createTitle')}</h3>
         <p className={css.hint}>{t('createHint')}</p>
         <label className={css.wsField}>
-          <span className={css.wsFieldLabel}>{t('createName')}</span>
-          <input
-            type="text"
-            className={css.wsInput}
-            value={createName}
-            placeholder={t('createNamePlaceholder')}
-            disabled={createBusy}
-            onChange={(event) => setCreateName(event.target.value)}
-          />
-        </label>
-        <label className={css.wsField}>
-          <span className={css.wsFieldLabel}>{t('createPurpose')}</span>
+          <span className={css.wsFieldLabel}>{t('createDescription')}</span>
           <textarea
             className={css.wsTextarea}
             rows={2}
-            value={createPurpose}
-            placeholder={t('createPurposePlaceholder')}
+            value={createDescription}
+            placeholder={t('createDescriptionPlaceholder')}
             disabled={createBusy}
-            onChange={(event) => setCreatePurpose(event.target.value)}
+            onChange={(event) => setCreateDescription(event.target.value)}
           />
         </label>
-        <label className={css.wsField}>
-          <span className={css.wsFieldLabel}>{t('createSteps')}</span>
-          <textarea
-            className={css.wsTextarea}
-            rows={3}
-            value={createSteps}
-            placeholder={t('createStepsPlaceholder')}
-            disabled={createBusy}
-            onChange={(event) => setCreateSteps(event.target.value)}
-          />
-        </label>
-        <label className={css.wsField}>
-          <span className={css.wsFieldLabel}>{t('createRules')}</span>
-          <textarea
-            className={css.wsTextarea}
-            rows={2}
-            value={createRules}
-            placeholder={t('createRulesPlaceholder')}
-            disabled={createBusy}
-            onChange={(event) => setCreateRules(event.target.value)}
-          />
-        </label>
-        <label className={css.wsField}>
-          <span className={css.wsFieldLabel}>{t('createReferences')}</span>
-          <textarea
-            className={css.wsTextarea}
-            rows={3}
-            value={createReferences}
-            placeholder={t('createReferencesPlaceholder')}
-            disabled={createBusy}
-            onChange={(event) => setCreateReferences(event.target.value)}
-          />
-        </label>
+        <button
+          type="button"
+          className={css.ghost}
+          aria-expanded={advancedOpen}
+          onClick={() => setAdvancedOpen((open) => !open)}
+        >
+          {advancedOpen ? '▴' : '▾'} {t('createAdvanced')}
+        </button>
+        {advancedOpen && (
+          <>
+            <label className={css.wsField}>
+              <span className={css.wsFieldLabel}>{t('createName')}</span>
+              <input
+                type="text"
+                className={css.wsInput}
+                value={createName}
+                placeholder={t('createNamePlaceholder')}
+                disabled={createBusy}
+                onChange={(event) => setCreateName(event.target.value)}
+              />
+            </label>
+            <label className={css.wsField}>
+              <span className={css.wsFieldLabel}>{t('createSteps')}</span>
+              <textarea
+                className={css.wsTextarea}
+                rows={3}
+                value={createSteps}
+                placeholder={t('createStepsPlaceholder')}
+                disabled={createBusy}
+                onChange={(event) => setCreateSteps(event.target.value)}
+              />
+            </label>
+            <label className={css.wsField}>
+              <span className={css.wsFieldLabel}>{t('createRules')}</span>
+              <textarea
+                className={css.wsTextarea}
+                rows={2}
+                value={createRules}
+                placeholder={t('createRulesPlaceholder')}
+                disabled={createBusy}
+                onChange={(event) => setCreateRules(event.target.value)}
+              />
+            </label>
+            <label className={css.wsField}>
+              <span className={css.wsFieldLabel}>{t('createReferences')}</span>
+              <textarea
+                className={css.wsTextarea}
+                rows={3}
+                value={createReferences}
+                placeholder={t('createReferencesPlaceholder')}
+                disabled={createBusy}
+                onChange={(event) => setCreateReferences(event.target.value)}
+              />
+            </label>
+          </>
+        )}
         <div className={css.wsActions}>
           <button
             type="button"
             className={css.primary}
-            disabled={createBusy || createName.trim() === '' || createPurpose.trim() === ''}
+            disabled={createBusy || createDescription.trim() === ''}
             onClick={() => { void submitCreate() }}
           >
             {createBusy ? t('pending') : t('createGenerate')}
@@ -613,15 +684,40 @@ function WorkshopTab({
 
 /** Render the skill-center full-screen page. */
 export function SkillCenterOverlay({
-  t, useCenter, useMarket, useStore, useTraining, open, close, refreshMarket, installMarket, importSkill,
-  removeSkill, restoreRevision, startTraining, finishTraining, cancelTraining,
+  t, useCenter, useMarket, useStore, useTraining, useOverview, usePractices, useGraphData, usePendingMemories,
+  open, close, toggleWorkshop, openCreateDraft, refreshMarket, installMarket, finishTraining,
+  cancelTraining, saveEnabled, refreshOverview, refreshExperiences, assignPractice,
+  removePractice, confirmPractice, refreshPendingMemories, memoryAction, openGraph, closeGraph,
 }: SkillCenterOverlayProps) {
   const center = useCenter(value => value)
   const market = useMarket(value => value)
   const store = useStore(value => value)
   const training = useTraining(value => value)
+  const overview = useOverview(value => value)
+  const practices = usePractices(value => value)
+  const graphData = useGraphData(value => value)
+  const pendingMemories = usePendingMemories(value => value)
   const [finishing, setFinishing] = useState(false)
   const [trainingNotice, setTrainingNotice] = useState<Notice>()
+  useEffect(() => {
+    if (center.view === 'closed') return
+    if (center.view === 'skills') void refreshOverview()
+    if (center.view === 'experiences') {
+      void refreshOverview()
+      void refreshExperiences()
+      void refreshPendingMemories()
+    }
+  }, [center.view])
+  // 阅历视图打开期间自动轮询：对话归纳/视频实操落库后无需手动刷新即可看到。
+  useEffect(() => {
+    if (center.view !== 'experiences') return
+    const timer = globalThis.setInterval(() => {
+      void refreshOverview()
+      void refreshExperiences()
+      void refreshPendingMemories()
+    }, 15_000)
+    return () => globalThis.clearInterval(timer)
+  }, [center.view, refreshOverview, refreshExperiences, refreshPendingMemories])
   if (center.view === 'closed') return null
 
   const handleFinishTraining = async (): Promise<void> => {
@@ -640,10 +736,6 @@ export function SkillCenterOverlay({
   }
 
   const installedIds = new Set(store.skills.map(skill => skill.id))
-  const copyToClipboard = async (text: string): Promise<void> => {
-    await navigator.clipboard.writeText(text)
-  }
-
   return (
     <div className={css.root} role="dialog" aria-modal="true" aria-label={t('centerTitle')}>
       <div className={css.backdrop} onClick={close} />
@@ -654,17 +746,24 @@ export function SkillCenterOverlay({
           <nav className={css.tabs}>
             <button
               type="button"
+              className={center.view === 'skills' ? css.tabActive : css.tab}
+              onClick={() => open('skills')}
+            >
+              {t('wallTitle')}
+            </button>
+            <button
+              type="button"
+              className={center.view === 'experiences' ? css.tabActive : css.tab}
+              onClick={() => open('experiences')}
+            >
+              {t('navExperiences')}
+            </button>
+            <button
+              type="button"
               className={center.view === 'market' ? css.tabActive : css.tab}
               onClick={() => open('market')}
             >
               {t('tabMarket')}
-            </button>
-            <button
-              type="button"
-              className={center.view === 'workshop' ? css.tabActive : css.tab}
-              onClick={() => open('workshop')}
-            >
-              {t('tabWorkshop')}
             </button>
           </nav>
           <button type="button" className={css.close} onClick={close} aria-label={t('close')}>
@@ -696,29 +795,49 @@ export function SkillCenterOverlay({
           </div>
         )}
         <div className={css.body}>
-          {center.view === 'market'
-            ? (
-              <MarketTab
-                t={t}
-                market={market}
-                installedIds={installedIds}
-                onRefresh={refreshMarket}
-                onInstall={installMarket}
-              />
-            )
-            : (
-              <WorkshopTab
-                t={t}
-                store={store}
-                {...(center.createDraft === undefined ? {} : { createDraft: center.createDraft })}
-                onDraftConsumed={() => open('workshop')}
-                onImport={importSkill}
-                onCopy={copyToClipboard}
-                onRemove={removeSkill}
-                onRestore={restoreRevision}
-                onStartTraining={startTraining}
-              />
-            )}
+          {center.view === 'skills' && (
+            <SkillCardWall
+              t={t}
+              store={store}
+              overview={overview}
+              onToggle={async (id, enabled) => { await saveEnabled([{ id, enabled }]) }}
+              onManage={() => { close(); toggleWorkshop() }}
+              onMarket={() => open('market')}
+            />
+          )}
+          {center.view === 'graph' && (
+            <KnowledgeGraph
+              t={t}
+              snapshot={graphData}
+              skillId={center.graphSkillId ?? ''}
+              onClose={() => closeGraph()}
+            />
+          )}
+          {center.view === 'experiences' && (
+            <ExperiencesWall
+              t={t}
+              overview={overview}
+              practices={practices}
+              skills={store.skills}
+              pendingMemories={pendingMemories}
+              onAssign={assignPractice}
+              onRemove={removePractice}
+              onConfirm={confirmPractice}
+              onMemoryAction={memoryAction}
+              onRefresh={refreshExperiences}
+              onCreateSkill={(title, example) => openCreateDraft({ name: title, purpose: example, steps: '', rules: '' })}
+              onOpenGraph={(skillId) => openGraph(skillId)}
+            />
+          )}
+          {center.view === 'market' && (
+            <MarketTab
+              t={t}
+              market={market}
+              installedIds={installedIds}
+              onRefresh={refreshMarket}
+              onInstall={installMarket}
+            />
+          )}
         </div>
       </div>
     </div>

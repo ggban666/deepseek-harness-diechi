@@ -1,7 +1,7 @@
 /**
  * 平权技能设置 browser half: one `settings.section` page (bottom-left settings
- * → 平权技能设置), the hero quick-action cards, and the full-screen 平权技能中心
- * (`shell.overlay`) with 商店 / 工坊 tabs. Durable state rides the three
+ * → 平权技能设置), the sidebar nav + workshop panel, and the full-screen
+ * 平权技能中心 (`shell.overlay`) with 卡片墙 / 阅历 / 商店 tabs. Durable state rides the three
  * namespaces the web bundle's skill-store row owns — `skill.store` (the
  * installed catalog), `skill.vision` (the live local-vision config) and
  * `skill-market` (the scanned local store). The controller mirrors the
@@ -20,6 +20,8 @@ import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 // conversation.hero.quick slot declaration (ui-conversation) into SlotMap.
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
+// Type-only: pulls the sidebar.nav slot declaration (ui-sidebar) into SlotMap.
+import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type { HostObservable } from '@deepseek-ai/dsh-client-ui-slots'
 import {
   SkillStoreSection,
@@ -27,8 +29,6 @@ import {
 } from './SkillStoreSection.tsx'
 import { VisionSection, type VisionSectionInjected, type VisionState } from './VisionSection.tsx'
 import { VoiceSection, type VoiceSectionInjected } from './VoiceSection.tsx'
-import { DevicesSection, type DevicesSectionInjected, type DevicesState } from './DevicesSection.tsx'
-import { WebBluetoothTransport } from './device-transport.ts'
 import { VoiceReplyActions, type VoiceReplyInjected } from './VoiceReplyActions.tsx'
 import {
   armVoiceAudioWarmup, streamVoice, StreamingVoicePlayer, transcribeAudio as asrTranscribe, VOICE_DEFAULT_ENDPOINT, VOICE_DEFAULT_SPEED,
@@ -38,12 +38,14 @@ import {
 import type { ImportResult, RecognitionImage, RecognitionResult, RetrainResult, SkillDraft } from './skill-display.ts'
 import {
   SkillCenterOverlay, type CreateSkillInput, type MarketState, type SkillCenterInjected, type SkillCenterState,
-  type TrainingStartInput,
+  type SkillCenterView, type TrainingStartInput,
 } from './SkillCenterOverlay.tsx'
-import { SkillCenterHeroCards } from './SkillCenterHeroCards.tsx'
-import { TrainingDock, type TrainingDockInjected } from './TrainingDock.tsx'
+import { SkillNav } from './SkillNav.tsx'
+import { SkillWorkshopPanel } from './SkillWorkshopPanel.tsx'
+import { TrainingDock, type DistillNotice, type TrainingDockInjected } from './TrainingDock.tsx'
 import { CameraChatDock, type CameraChatDockInjected, type CameraChatTurn } from './CameraChatDock.tsx'
 import { MicButton, type MicButtonInjected } from './MicButton.tsx'
+import type { BrainPracticeItem, SkillOverviewSnapshot, BrainGraphSnapshot, BrainPendingMemory } from '@deepseek-ai/dsh-api-remotes/types'
 import { en, zh } from './locales.ts'
 import {
   marketSkillToEntry, parseSkillImport,
@@ -60,12 +62,6 @@ export type {
 export type { VisionSectionInjected, VisionState } from './VisionSection.tsx'
 export type { VoiceState } from './voice.ts'
 export type { VoiceSectionInjected } from './VoiceSection.tsx'
-export type { DevicesSectionInjected, DevicesState } from './DevicesSection.tsx'
-export type {
-  CompanionAudioRoute, CompanionDevice, CompanionMessage, CompanionTransport,
-  BluetoothCompanionTransport, CompanionDeviceKind, CompanionTransportKind,
-} from './device-transport.ts'
-export { BrowserAudioTransport } from './device-transport.ts'
 export type { VoiceReplyInjected } from './VoiceReplyActions.tsx'
 export type {
   SkillManifestEntry, SkillMarketSettings, SkillMarketSkill, SkillStoreSettings, SkillManifestRevision,
@@ -128,19 +124,26 @@ const VIDEO_TIMEOUT_MS = 600_000
 /** Default TTS provider: the diechi vision+tts service on 8080. */
 const VOICE_DEFAULT_PROVIDER: VoiceState['provider'] = 'local'
 
+/** 全局大脑 RPC 最小面（由 api-remotes 挂载的 remote.diechiBrain）。 */
+interface DiechiBrainRemoteLike {
+  overview(): Promise<{ ok: true; value: SkillOverviewSnapshot } | { ok: false; error: { code: string; message: string } }>
+  list(): Promise<{ ok: true; value: { items: readonly BrainPracticeItem[] } } | { ok: false; error: { code: string; message: string } }>
+  assign(input: { topic: string; skillId: string }): Promise<{ ok: true; value: { ok: boolean; error?: string } } | { ok: false; error: { code: string; message: string } }>
+  removeItem(input: { topic: string }): Promise<{ ok: true; value: boolean } | { ok: false; error: { code: string; message: string } }>
+  confirm(input: { topic: string }): Promise<{ ok: true; value: boolean } | { ok: false; error: { code: string; message: string } }>
+  ingestScene(input: { content: string; fingerprint?: string; skillId?: string }): Promise<{ ok: true; value: { id: number; startedAt: string; endedAt: string; content: string; count: number } | undefined } | { ok: false; error: { code: string; message: string } }>
+  recallScenes(input: { query?: string; sinceMinutes?: number; limit?: number; skillId?: string }): Promise<{ ok: true; value: { count: number; scenes: readonly { id: number; startedAt: string; endedAt: string; content: string; count: number }[] } } | { ok: false; error: { code: string; message: string } }>
+  graph(input: { skillId?: string; limit?: number }): Promise<{ ok: true; value: BrainGraphSnapshot } | { ok: false; error: { code: string; message: string } }>
+  pendingMemories(): Promise<{ ok: true; value: { items: readonly BrainPendingMemory[] } } | { ok: false; error: { code: string; message: string } }>
+  memoryAction(input: { id: number; confirm: boolean }): Promise<{ ok: true; value: { ok: boolean; error?: string } } | { ok: false; error: { code: string; message: string } }>
+}
+
 /**
  * One conversation send outcome. Training flows need the target session id
  * back so the training banner can pin itself to that session; plain sends
  * only care about success. S is the session id type (branded on the runtime).
  */
 type SendOutcome<S = string> = { ok: true; sessionId: S } | { ok: false; error: string }
-
-/** Durable companion-device preferences (skill-devices namespace). */
-export interface DevicesSettings {
-  readonly connectedId: string
-  readonly inputEnabled: boolean
-  readonly outputEnabled: boolean
-}
 
 /**
  * Bridges the store namespaces (catalog, vision, market) and the skill-center
@@ -151,7 +154,6 @@ class SkillStoreController {
   private readonly store: SnapshotStore<SkillStoreState>
   private readonly vision: SnapshotStore<VisionState>
   private readonly voice: SnapshotStore<VoiceState>
-  private readonly devices: SnapshotStore<DevicesState>
   private readonly market: SnapshotStore<MarketState>
   private visionSessionId: string
   private visionTurnAbort: AbortController | undefined
@@ -159,13 +161,18 @@ class SkillStoreController {
   private readonly training: SnapshotStore<TrainingState>
   private voicePlayer: StreamingVoicePlayer | undefined = undefined
   private voiceAbort: AbortController | undefined = undefined
-  private readonly bluetooth = new WebBluetoothTransport()
+  private readonly overviewStore = createSnapshotStore<SkillOverviewSnapshot | undefined>(undefined)
+  private readonly practicesStore = createSnapshotStore<readonly BrainPracticeItem[]>([])
+  private readonly distillStore = createSnapshotStore<DistillNotice | undefined>(undefined)
+  private readonly graphStore = createSnapshotStore<BrainGraphSnapshot>({ nodes: [], edges: [] })
+  private readonly pendingMemoriesStore = createSnapshotStore<readonly BrainPendingMemory[]>([])
 
   /**
    * @param storeScope - bound scope for the `skill.store` catalog.
    * @param visionScope - bound scope for the `skill.vision` configuration.
    * @param marketScope - bound scope for the scanned `skill-market` catalog.
    * @param trainingScope - bound scope for the `skill-training` session state.
+   * @param brainRemote - diechi 全局大脑 RPC 远程面（overview/list/assign/removeItem）。
    */
   constructor(
     private readonly storeScope: SettingsScope<SkillStoreSettings>,
@@ -173,15 +180,16 @@ class SkillStoreController {
     private readonly voiceScope: SettingsScope<VoiceState>,
     private readonly marketScope: SettingsScope<SkillMarketSettings>,
     private readonly trainingScope: SettingsScope<SkillTrainingSettings>,
-    private readonly devicesScope: SettingsScope<DevicesSettings>,
+    private readonly distillScope: SettingsScope<DistillNotice>,
     private readonly sendRetrain: (id: string, description: string) => Promise<RetrainResult>,
     private readonly sendCreate: (input: CreateSkillInput) => Promise<RetrainResult>,
     private readonly sendTrainingGuide: (input: TrainingStartInput) => Promise<SendOutcome>,
     private readonly sendTrainingFinish: (state: TrainingState) => Promise<boolean>,
     private readonly sendCameraObservationPrompt: (context: string) => Promise<RetrainResult>,
+    private readonly brainRemote: DiechiBrainRemoteLike,
   ) {
     this.store = createSnapshotStore<SkillStoreState>({ skills: [], writable: false })
-    this.vision = createSnapshotStore<VisionState>({ enabled: false, endpoint: VISION_DEFAULT_ENDPOINT, model: VISION_DEFAULT_MODEL, intervalSec: 5, voiceChat: false, chatIntervalSec: 0 })
+    this.vision = createSnapshotStore<VisionState>({ enabled: false, endpoint: VISION_DEFAULT_ENDPOINT, model: VISION_DEFAULT_MODEL, intervalSec: 0, voiceChat: false, chatIntervalSec: 0 })
     this.visionSessionId = ''
     this.visionTurnAbort = undefined
     this.voice = createSnapshotStore<VoiceState>({
@@ -196,15 +204,6 @@ class SkillStoreController {
       asrEnabled: false,
     })
     this.market = createSnapshotStore<MarketState>({ status: 'loading', dir: '', skills: [] })
-    this.devices = createSnapshotStore<DevicesState>({
-      supported: WebBluetoothTransport.supported(),
-      device: undefined,
-      connected: false,
-      inputEnabled: true,
-      outputEnabled: true,
-      scanning: false,
-      busy: false,
-    })
     this.center = createSnapshotStore<SkillCenterState>({ view: 'closed' })
     this.training = createSnapshotStore<TrainingState>(IDLE_TRAINING)
     this.refreshStore()
@@ -217,13 +216,7 @@ class SkillStoreController {
     this.voiceScope.subscribe(() => { this.refreshVoice() })
     this.marketScope.subscribe(() => { this.refreshMarket() })
     this.trainingScope.subscribe(() => { this.refreshTraining() })
-    this.devicesScope.subscribe(() => { this.refreshDevices() })
-    // 蓝牙链路断开（设备关机 / 离开范围）时自动把连接态复位。
-    this.bluetooth.subscribe((message) => {
-      if (message.type === 'session/state' && message.state === 'interrupted') {
-        this.devices.set({ ...this.devices.getSnapshot(), connected: false, busy: false })
-      }
-    })
+    this.distillScope.subscribe(() => { this.refreshDistill() })
     armVoiceAudioWarmup()
   }
 
@@ -288,98 +281,12 @@ class SkillStoreController {
     })
   }
 
-  /** 从 skill-devices 作用域实时读取音频路由偏好。 */
-  private refreshDevices(): void {
-    const snapshot = this.devicesScope.getSnapshot()
+  /** 镜像宿主「已记入大脑」通知（skill-distill namespace，latest-wins）。 */
+  private refreshDistill(): void {
+    const snapshot = this.distillScope.getSnapshot()
     const value = snapshot.value
-    this.devices.set({
-      ...this.devices.getSnapshot(),
-      inputEnabled: value?.inputEnabled ?? true,
-      outputEnabled: value?.outputEnabled ?? true,
-    })
-  }
-
-  /** 持久化设备偏好（音频路由 / 记住的设备 id）。 */
-  private async setDevices(patch: Partial<DevicesSettings>): Promise<void> {
-    const current = this.devicesScope.getSnapshot().value
-      ?? { connectedId: '', inputEnabled: true, outputEnabled: true }
-    if (patch.connectedId !== undefined && patch.connectedId !== current.connectedId) {
-      await this.devicesScope.set('connectedId', patch.connectedId)
-    }
-    if (patch.inputEnabled !== undefined && patch.inputEnabled !== current.inputEnabled) {
-      await this.devicesScope.set('inputEnabled', patch.inputEnabled)
-    }
-    if (patch.outputEnabled !== undefined && patch.outputEnabled !== current.outputEnabled) {
-      await this.devicesScope.set('outputEnabled', patch.outputEnabled)
-    }
-  }
-
-  /** 打开系统 BLE 配对面板，选择并记住一个伴生设备。 */
-  async scanDevices(): Promise<void> {
-    if (!WebBluetoothTransport.supported()) throw new Error('bluetooth-unsupported')
-    this.devices.set({ ...this.devices.getSnapshot(), scanning: true, busy: true })
-    try {
-      const device = await this.bluetooth.requestPairing()
-      this.devices.set({
-        ...this.devices.getSnapshot(),
-        device,
-        connected: false,
-        scanning: false,
-        busy: false,
-      })
-    } catch (error) {
-      this.devices.set({ ...this.devices.getSnapshot(), scanning: false, busy: false })
-      throw error
-    }
-  }
-
-  /** 连接已配对设备（GATT + NUS），成功后记住设备 id。 */
-  async connectDevice(): Promise<void> {
-    const current = this.devices.getSnapshot()
-    if (current.device === undefined) throw new Error('no-device')
-    this.devices.set({ ...this.devices.getSnapshot(), busy: true })
-    try {
-      const connected = await this.bluetooth.connect(current.device.id)
-      this.devices.set({
-        ...this.devices.getSnapshot(),
-        device: connected,
-        connected: true,
-        busy: false,
-      })
-      await this.setDevices({ connectedId: connected.id })
-    } catch (error) {
-      this.devices.set({ ...this.devices.getSnapshot(), busy: false })
-      throw error
-    }
-  }
-
-  /** 断开伴生设备。 */
-  async disconnectDevice(): Promise<void> {
-    const current = this.devices.getSnapshot()
-    if (!current.connected) return
-    this.devices.set({ ...this.devices.getSnapshot(), busy: true })
-    try {
-      await this.bluetooth.disconnect()
-      this.devices.set({ ...this.devices.getSnapshot(), connected: false, busy: false })
-    } catch (error) {
-      this.devices.set({ ...this.devices.getSnapshot(), busy: false })
-      throw error
-    }
-  }
-
-  /** 通过蓝牙向伴生设备发送协议握手帧。 */
-  async sendHello(): Promise<boolean> {
-    const current = this.devices.getSnapshot()
-    if (!current.connected || current.device === undefined) return false
-    try {
-      await this.bluetooth.send({
-        type: 'device/hello',
-        protocol: 1,
-        device: current.device,
-      })
-      return true
-    } catch {
-      return false
+    if (value?.at !== undefined && value.sessionId !== undefined) {
+      this.distillStore.set({ at: value.at, sessionId: value.sessionId, topic: value.topic ?? '', target: value.target ?? '' })
     }
   }
 
@@ -440,7 +347,7 @@ class SkillStoreController {
   }
 
   /** Open the skill center on a tab; remembers an optional retrain target. */
-  open(view: 'market' | 'workshop', focusId?: string, createDraft?: SkillDraft): void {
+  open(view: SkillCenterView, focusId?: string, createDraft?: SkillDraft): void {
     this.center.set({
       view,
       ...(focusId === undefined ? {} : { focusId }),
@@ -448,9 +355,22 @@ class SkillStoreController {
     })
   }
 
-  /** Open the workshop with a recognition draft prefilled in the create form. */
+  /** Open the sidebar workshop panel with a recognition draft prefilled. */
   openCreateDraft(draft: SkillDraft): void {
-    this.open('workshop', undefined, draft)
+    this.center.set({ view: 'closed', workshopOpen: true, createDraft: draft })
+  }
+
+  /** 展开/收起侧边工坊面板。 */
+  toggleWorkshop(): void {
+    const state = this.center.getSnapshot()
+    this.center.set({ ...state, workshopOpen: !(state.workshopOpen ?? false) })
+  }
+
+  /** 清空工坊创建草稿（识别预填用完一次即清）。 */
+  clearWorkshopDraft(): void {
+    const state = this.center.getSnapshot()
+    const { createDraft: _cleared, ...rest } = state
+    this.center.set(rest)
   }
 
   /** Close the skill center page. */
@@ -621,6 +541,25 @@ class SkillStoreController {
   }
 
   /**
+   * Switch the backend vision model (local MiniCPM / cloud DS). Persisted in
+   * deploy-tools/vision-cloud.json so every vision path (camera, video,
+   * image) uses the same model immediately.
+   * @param model - model name (e.g. `minicpm-v-4.6` or `deepseek-v4-flash-vision-exp`).
+   */
+  async setVisionModel(model: string): Promise<void> {
+    const config = this.visionScope.getSnapshot().value
+    if (config?.enabled !== true) return
+    const endpoint = (config.endpoint || VISION_DEFAULT_ENDPOINT).replace(/\/+$/, '')
+    const response = await fetch(`${endpoint}/api/v1/vision/model`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model }),
+    })
+    if (!response.ok) throw new Error(`vision-model-http:${response.status}`)
+    await response.json().catch(() => undefined)
+  }
+
+  /**
    * Persist a voice configuration patch, field by field.
    * @param patch - fields to change.
    */
@@ -781,13 +720,11 @@ class SkillStoreController {
       // 视频实操过程发布到宿主：宿主先入库全局大脑（#实操 阅历），勾选人格时再同步。
       if (process !== undefined) {
         try {
-          console.log('[skill-store] videoProcess set start')
           await this.visionScope.set('videoProcess', {
             at: new Date().toISOString(),
             name: file.name,
             process,
           })
-          console.log('[skill-store] videoProcess set ok')
         } catch (error) {
           console.error('[skill-store] videoProcess set failed', error)
         }
@@ -838,7 +775,7 @@ class SkillStoreController {
               { type: 'image_url', image_url: { url: frame } },
             ],
           }],
-          max_tokens: 80,
+          max_tokens: 256,
           temperature: 0.4,
         }),
       })
@@ -895,7 +832,7 @@ class SkillStoreController {
               ],
             },
           ],
-          max_tokens: 120,
+          max_tokens: 256,
           temperature: 0.4,
         }),
       })
@@ -919,9 +856,11 @@ class SkillStoreController {
     if (config?.enabled !== true) return undefined
     const endpoint = (config.endpoint || VISION_DEFAULT_ENDPOINT).replace(/\/+$/, '')
     try {
+      const ctx = await this.buildVisionSkillContext()
       const response = await fetch(`${endpoint}/api/v1/vision/session`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ persona: ctx.persona, memory: ctx.memory }),
       })
       if (!response.ok) return undefined
       const payload = await response.json() as { session_id?: string }
@@ -929,6 +868,32 @@ class SkillStoreController {
     } catch {
       return undefined
     }
+  }
+
+  /**
+   * 组装当前平权技能上下文：勾选技能的人格提示词 + 最近视觉记忆时间线。
+   * 换技能=换一个人：摄像头会话的 system prompt 由此注入人格与记忆。
+   * 未勾选任何技能时返回空串（退化为通用视频通话助手）。
+   */
+  private async buildVisionSkillContext(): Promise<{ persona: string; memory: string }> {
+    const skills = this.storeScope.getSnapshot().value?.skills ?? []
+    const enabled = skills.filter(entry => entry.enabled === true && entry.content.trim() !== '')
+    const persona = enabled
+      .map(entry => `【${entry.title}】\n${entry.content.trim()}`)
+      .join('\n\n')
+    let memory = ''
+    try {
+      const scenes = await this.brainRemote.recallScenes({ sinceMinutes: 30, limit: 6 })
+      if (scenes.ok && scenes.value.scenes.length > 0) {
+        memory = scenes.value.scenes
+          .slice(-6)
+          .map(scene => `- ${scene.startedAt.slice(11, 19)} ${scene.content}`)
+          .join('\n')
+      }
+    } catch {
+      memory = ''
+    }
+    return { persona, memory }
   }
 
   async endVisionSession(sid: string): Promise<void> {
@@ -958,10 +923,13 @@ class SkillStoreController {
     sid: string
     frame?: string
     text?: string
+    reason?: string
+    persona?: string
+    memory?: string
     signal?: AbortSignal
     onDelta?: (delta: string) => void
   }): Promise<string> {
-    const { sid, frame = '', text = '', signal, onDelta } = args
+    const { sid, frame = '', text = '', reason = 'speech', persona, memory, signal, onDelta } = args
     const config = this.visionScope.getSnapshot().value
     if (config?.enabled !== true) return ''
     const endpoint = (config.endpoint || VISION_DEFAULT_ENDPOINT).replace(/\/+$/, '')
@@ -971,11 +939,16 @@ class SkillStoreController {
     const timer = setTimeout(() => controller.abort(), 90_000)
     let full = ''
     try {
+      const body: Record<string, string | number> = {
+        session_id: sid, frame, text, reason, max_tokens: 256, temperature: 0.4,
+      }
+      if (persona !== undefined && persona !== '') body.persona = persona
+      if (memory !== undefined && memory !== '') body.memory = memory
       const response = await fetch(`${endpoint}/api/v1/vision/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal: controller.signal,
-        body: JSON.stringify({ session_id: sid, frame, text, max_tokens: 120, temperature: 0.4 }),
+        body: JSON.stringify(body),
       })
       if (!response.ok || response.body === null) return ''
       const reader = response.body.getReader()
@@ -1011,17 +984,22 @@ class SkillStoreController {
     return full
   }
 
-  async runLiveChatFrameStream(frame: string, text: string, onDelta: (delta: string) => void): Promise<string> {
+  async runLiveChatFrameStream(frame: string, text: string, onDelta: (delta: string) => void, reason = 'speech'): Promise<string> {
     const config = this.visionScope.getSnapshot().value
     if (config?.enabled !== true) return ''
     if (!this.visionSessionId) {
       this.visionSessionId = (await this.startVisionSession()) ?? ''
     }
     const sid = this.visionSessionId
+    // 技能热切换：每轮把当前人格+记忆带上，服务端增量更新 system prompt。
+    const ctx = await this.buildVisionSkillContext()
     const controller = new AbortController()
     this.visionTurnAbort = controller
     try {
-      return await this.visionStreamTurn({ sid, frame, text, signal: controller.signal, onDelta })
+      return await this.visionStreamTurn({
+        sid, frame, text, reason, persona: ctx.persona, memory: ctx.memory,
+        signal: controller.signal, onDelta,
+      })
     } finally {
       if (this.visionTurnAbort === controller) this.visionTurnAbort = undefined
     }
@@ -1039,6 +1017,39 @@ class SkillStoreController {
     const sid = this.visionSessionId
     this.visionSessionId = ''
     if (sid) await this.endVisionSession(sid)
+  }
+
+  /**
+   * 连续感知推帧：把当前画面送进后端摄像头会话缓冲（只存帧、不推理）。
+   * 摄像头开着时前端每 1 秒调用一次；用户说话/提问时模型依据缓冲记忆回答。
+   * @param frame - one JPEG data URL captured from the live preview.
+   */
+  async observeVisionFrame(frame: string, diff = -1): Promise<{ caption?: string }> {
+    const config = this.visionScope.getSnapshot().value
+    if (config?.enabled !== true) return {}
+    if (!this.visionSessionId) {
+      this.visionSessionId = (await this.startVisionSession()) ?? ''
+    }
+    const sid = this.visionSessionId
+    if (sid === '') return {}
+    const endpoint = (config.endpoint || VISION_DEFAULT_ENDPOINT).replace(/\/+$/, '')
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 5_000)
+    try {
+      const response = await fetch(`${endpoint}/api/v1/vision/session/${sid}/observe`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+        body: JSON.stringify({ frame, diff }),
+      })
+      if (!response.ok) return {}
+      const data = await response.json() as { caption?: string }
+      return typeof data.caption === 'string' ? { caption: data.caption } : {}
+    } catch {
+      return {} // 静默：视觉服务未就绪时保持预览可用，下一帧重试。
+    } finally {
+      clearTimeout(timer)
+    }
   }
 
   /**
@@ -1061,6 +1072,9 @@ class SkillStoreController {
     const trimmed = text.trim()
     if (trimmed === '') return
     await this.visionScope.set('lastPerception', { at: new Date().toISOString(), text: trimmed })
+    // 视觉记忆：同一画面描述自动写入当前技能大脑的场景时间线（无勾选技能写全局大脑），
+    // 去重合并由宿主 seeScene 完成。失败不影响感知发布（视觉记忆是尽力而为的）。
+    void this.brainRemote.ingestScene({ content: trimmed }).catch(() => {})
   }
 
   /**
@@ -1076,12 +1090,14 @@ class SkillStoreController {
         vision: this.vision as HostObservable<VisionState>,
       },
       runLiveChatFrame: (frame, history) => this.runLiveChatFrame(frame, history),
-      runLiveChatFrameStream: (frame, text, onDelta) => this.runLiveChatFrameStream(frame, text, onDelta),
+      runLiveChatFrameStream: (frame, text, onDelta, reason) => this.runLiveChatFrameStream(frame, text, onDelta, reason),
       interruptVisionChat: () => this.interruptVisionChat(),
       resetVisionSession: () => this.resetVisionSession(),
+      observeVisionFrame: (frame: string, diff?: number) => this.observeVisionFrame(frame, diff ?? -1),
       publishPerception: (text) => this.publishPerception(text),
       sendCameraObservation: (context) => this.sendCameraObservation(context),
       transcribeAudio: (blob) => this.transcribeMic(blob),
+      speak: (text) => this.speak(text),
       stopSpeaking: () => this.stopSpeaking(),
     }
   }
@@ -1106,6 +1122,7 @@ class SkillStoreController {
       },
       writable: this.visionScope.getSnapshot().writable,
       setVision: (patch) => this.setVision(patch),
+      setVisionModel: (model: string) => this.setVisionModel(model),
       runRecognition: (image: RecognitionImage) => this.runRecognition(image),
       runVideoRecognition: (file: File) => this.runVideoRecognition(file),
       runLiveFrame: (frame: string) => this.runLiveFrame(frame),
@@ -1126,23 +1143,6 @@ class SkillStoreController {
       setVoice: (patch) => this.setVoice(patch),
       speak: (text, config) => this.speak(text, config),
       stopSpeaking: () => this.stopSpeaking(),
-    }
-  }
-
-  /**
-   * Build the face the 蓝牙设备 settings section slot registration injects.
-   * @returns the companion-device snapshot hook plus pair / link verbs.
-   */
-  injectDevices(): DevicesSectionInjected {
-    return {
-      hooks: {
-        devices: this.devices as HostObservable<DevicesState>,
-      },
-      scan: () => this.scanDevices(),
-      connect: () => this.connectDevice(),
-      disconnect: () => this.disconnectDevice(),
-      setRoutes: (patch) => this.setDevices(patch),
-      sendHello: () => this.sendHello(),
     }
   }
 
@@ -1174,6 +1174,99 @@ class SkillStoreController {
     }
   }
 
+  /** 刷新技能库现状（overview RPC）。 */
+  async refreshOverview(): Promise<void> {
+    try {
+      const result = await this.brainRemote.overview()
+      if (result.ok) this.overviewStore.set(result.value)
+    } catch { /* RPC 不可用时保持上次快照 */ }
+  }
+
+  /** 刷新实操阅历收件箱（#实操）。 */
+  async refreshExperiences(): Promise<void> {
+    try {
+      const result = await this.brainRemote.list()
+      if (result.ok) this.practicesStore.set(result.value.items)
+    } catch { /* 同上 */ }
+  }
+
+  /** 一键归位：把实操写入指定技能的大脑，随后刷新两个快照。 */
+  async assignPractice(topic: string, skillId: string): Promise<boolean> {
+    try {
+      const result = await this.brainRemote.assign({ topic, skillId })
+      if (!result.ok) return false
+      await this.refreshExperiences()
+      await this.refreshOverview()
+      return result.value.ok
+    } catch { return false }
+  }
+
+  /** 删除一条实操阅历。 */
+  async removePractice(topic: string): Promise<boolean> {
+    try {
+      const result = await this.brainRemote.removeItem({ topic })
+      if (result.ok) { await this.refreshExperiences(); return result.value }
+      return false
+    } catch { return false }
+  }
+
+  /** 确认一条待核对知识：内容无误，可参与归位与注入。 */
+  async confirmPractice(topic: string): Promise<boolean> {
+    try {
+      const result = await this.brainRemote.confirm({ topic })
+      if (!result.ok) return false
+      await this.refreshExperiences()
+      await this.refreshOverview()
+      return result.value
+    } catch { return false }
+  }
+
+  /** 刷新待确认记忆列表（自动除幻觉标记的疑似记忆）。 */
+  async refreshPendingMemories(): Promise<void> {
+    try {
+      const result = await this.brainRemote.pendingMemories()
+      if (result.ok) this.pendingMemoriesStore.set(result.value.items)
+    } catch { /* RPC 不可用时保持上次快照 */ }
+  }
+
+  /** 处置一条待确认记忆：confirm=true 解除标记；否则删除。 */
+  async memoryAction(id: number, confirm: boolean): Promise<boolean> {
+    try {
+      const result = await this.brainRemote.memoryAction({ id, confirm })
+      if (!result.ok || !result.value.ok) return false
+      await this.refreshPendingMemories()
+      await this.refreshOverview()
+      return true
+    } catch { return false }
+  }
+
+  /** 刷新知识图谱快照；RPC 失败时置空并打日志（避免白屏误以为没反应）。 */
+  async refreshGraph(skillId: string): Promise<void> {
+    try {
+      const result = await this.brainRemote.graph(skillId ? { skillId } : {})
+      if (result.ok) {
+        this.graphStore.set(result.value)
+        return
+      }
+      this.graphStore.set({ nodes: [], edges: [] })
+      console.error('[ui-skill-store] graph RPC rejected:', result.error.code, result.error.message)
+    } catch (error) {
+      this.graphStore.set({ nodes: [], edges: [] })
+      console.error('[ui-skill-store] graph RPC failed:', error)
+    }
+  }
+
+  /** 打开知识图谱视图并加载数据。 */
+  openGraph(skillId: string): void {
+    this.open('graph')
+    void this.refreshGraph(skillId)
+  }
+
+  /** 关闭知识图谱视图，返回技能卡片墙。 */
+  closeGraph(): void {
+    this.open('skills')
+  }
+
   /**
    * Build the face the skill-center overlay and hero cards inject: the center
    * view, the scanned market, the installed catalog, and the center actions.
@@ -1186,17 +1279,35 @@ class SkillStoreController {
         market: this.market as HostObservable<MarketState>,
         store: this.store as HostObservable<SkillStoreState>,
         training: this.training as HostObservable<TrainingState>,
+        overview: this.overviewStore as HostObservable<SkillOverviewSnapshot | undefined>,
+        practices: this.practicesStore as HostObservable<readonly BrainPracticeItem[]>,
+        graphData: this.graphStore as HostObservable<BrainGraphSnapshot>,
+        pendingMemories: this.pendingMemoriesStore as HostObservable<readonly BrainPendingMemory[]>,
       },
       open: (view, focusId, createDraft) => this.open(view, focusId, createDraft),
+      openCreateDraft: (draft) => this.openCreateDraft(draft),
       close: () => this.close(),
+      toggleWorkshop: () => this.toggleWorkshop(),
+      clearWorkshopDraft: () => this.clearWorkshopDraft(),
       refreshMarket: () => this.refreshMarketRequest(),
       installMarket: (id) => this.installMarket(id),
       importSkill: (file) => this.importSkill(file),
       removeSkill: (id) => this.removeSkill(id),
       restoreRevision: (id, version) => this.restoreRevision(id, version),
+      createSkill: (input) => this.createSkill(input),
       startTraining: (input) => this.startTraining(input),
       finishTraining: () => this.finishTraining(),
       cancelTraining: () => this.cancelTraining(),
+      saveEnabled: (updates) => this.saveEnabled(updates),
+      refreshOverview: () => this.refreshOverview(),
+      refreshExperiences: () => this.refreshExperiences(),
+      assignPractice: (topic, skillId) => this.assignPractice(topic, skillId),
+      removePractice: (topic) => this.removePractice(topic),
+      confirmPractice: (topic) => this.confirmPractice(topic),
+      refreshPendingMemories: () => this.refreshPendingMemories(),
+      memoryAction: (id, confirm) => this.memoryAction(id, confirm),
+      openGraph: (skillId) => this.openGraph(skillId),
+      closeGraph: () => this.closeGraph(),
     }
   }
 
@@ -1209,6 +1320,7 @@ class SkillStoreController {
     return {
       hooks: {
         training: this.training as HostObservable<TrainingState>,
+        distill: this.distillStore as HostObservable<DistillNotice | undefined>,
       },
       finishTraining: () => this.finishTraining(),
       cancelTraining: () => this.cancelTraining(),
@@ -1222,13 +1334,14 @@ class SkillStoreController {
  * @param ctx - client root context.
  */
 export function apply(ctx: ClientContext): void {
+
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-skill-store: dictionaries')
   const t = ctx.locale.bind(NS)
 
   // Conversation/sessions power the one-click retrain entry: the workshop
   // sends the user's requested change straight into the current conversation
   // and the agent loop turns it into a new revision (skill-generate tool).
-  ctx.inject(['slots', 'locale', 'settingsScope', 'conversation', 'sessions', 'workspaces'], (scope: ClientContext) => {
+  ctx.inject(['slots', 'locale', 'settingsScope', 'remote', 'sessions', 'workspaces', 'remote.diechiBrain'], (scope: ClientContext) => {
     type SessionId = Parameters<typeof scope.sessions.scope>[0]
     const ensureConversation = async (): Promise<SendOutcome<SessionId>> => {
       const sessions = scope.sessions as unknown as {
@@ -1293,13 +1406,12 @@ export function apply(ctx: ClientContext): void {
         : { ok: false, error: 'no-session' }
     }
     const createPrompt = (input: CreateSkillInput): string => {
-      const lines: string[] = [
-        t('createPromptTitle').replace('{name}', input.name),
-        t('createPromptPurpose').replace('{text}', input.purpose),
-      ]
-      if (input.steps !== '') lines.push(t('createPromptSteps').replace('{text}', input.steps))
-      if (input.rules !== '') lines.push(t('createPromptRules').replace('{text}', input.rules))
-      if (input.references !== '') lines.push(t('createPromptReferences').replace('{text}', input.references))
+      const lines: string[] = []
+      if (input.name.trim() !== '') lines.push(t('createPromptTitle').replace('{name}', input.name.trim()))
+      lines.push(t('createPromptPurpose').replace('{text}', input.purpose.trim()))
+      if (input.steps.trim() !== '') lines.push(t('createPromptSteps').replace('{text}', input.steps.trim()))
+      if (input.rules.trim() !== '') lines.push(t('createPromptRules').replace('{text}', input.rules.trim()))
+      if (input.references.trim() !== '') lines.push(t('createPromptReferences').replace('{text}', input.references.trim()))
       lines.push(t('createPromptTail'))
       return lines.join('\n\n')
     }
@@ -1328,7 +1440,7 @@ export function apply(ctx: ClientContext): void {
       scope.settingsScope.bind({ namespace: 'skill-voice' }),
       scope.settingsScope.bind({ namespace: 'skill-market' }),
       scope.settingsScope.bind({ namespace: 'skill-training' }),
-      scope.settingsScope.bind({ namespace: 'skill-devices' }),
+      scope.settingsScope.bind({ namespace: 'skill-distill' }),
       async (id, description): Promise<RetrainResult> => sendToConversation(
         `${t('workshopConversationCopy').replace('{id}', id)}\n\n${t('retrainPromptSuffix').replace('{text}', description.trim())}`,
       ),
@@ -1336,10 +1448,12 @@ export function apply(ctx: ClientContext): void {
       async (input): Promise<SendOutcome> => sendToConversationWithId(buildTrainingGuide(input)),
       async (state): Promise<boolean> => sendToSession(state.sessionId as SessionId, buildTrainingFinish(state)),
       async (context): Promise<RetrainResult> => sendToConversation(context),
+      scope.remote.diechiBrain as unknown as DiechiBrainRemoteLike,
     )
 
     // Bottom-left settings: 平权技能设置 (settings stay inside settings; the
     // store and the workshop live outside it in the skill center).
+
     scope.slots.inject('settings.section', () => scope.slots.register({
       name: 'settings.section',
       id: 'skill-store',
@@ -1349,17 +1463,22 @@ export function apply(ctx: ClientContext): void {
       inject: () => controller.inject(),
     }, SkillStoreSection))
 
-    // Bottom-left settings: 蓝牙设备 — companion-device pairing over Web
-    // Bluetooth (Nordic UART) with persisted audio-route preferences.
-    scope.slots.inject('settings.section', () => scope.slots.register({
-      name: 'settings.section',
-      id: 'devices',
-      order: 23,
-      label: () => t('devicesNav'),
+    // 蝶翅三入口导航：对话 / 平权技能 / 阅历（sidebar 顶部 tab 条）。
+    scope.slots.inject('sidebar.nav', () => scope.slots.register({
+      name: 'sidebar.nav',
+      id: 'skill-nav',
+      order: 100,
       locale: NS,
-      inject: () => controller.injectDevices(),
-    }, DevicesSection))
+      inject: () => controller.injectCenter(),
+    }, SkillNav))
 
+    // 侧边工坊面板（平权技能工坊）：已安装技能管理 + 新建 + 导入，住在侧边栏。
+    scope.slots.inject('sidebar.workshop', () => scope.slots.register({
+      name: 'sidebar.workshop',
+      locale: NS,
+      inject: () => controller.injectCenter(),
+    }, SkillWorkshopPanel))
+    
     // Bottom-left settings: 视觉 — local-vision configuration (enable switch,
     // endpoint, model, camera caption cadence) plus the recognition entry
     // points that turn what the model sees into a skill draft.
@@ -1422,16 +1541,7 @@ export function apply(ctx: ClientContext): void {
       inject: () => controller.injectMic(),
     }, MicButton))
 
-    // Hero quick row: two cards that open the skill center on their tab.
-    scope.slots.inject('conversation.hero.quick', () => scope.slots.register({
-      name: 'conversation.hero.quick',
-      id: 'skill-center',
-      order: 100,
-      locale: NS,
-      inject: () => controller.injectCenter(),
-    }, SkillCenterHeroCards))
-
-    // Full-screen skill center (商店 / 工坊), above every column.
+    // Full-screen skill center (卡片墙 / 阅历 / 商店), above every column.
     scope.slots.inject('shell.overlay', () => scope.slots.register({
       name: 'shell.overlay',
       id: 'skill-center',
@@ -1442,4 +1552,3 @@ export function apply(ctx: ClientContext): void {
     }, SkillCenterOverlay))
   })
 }
-

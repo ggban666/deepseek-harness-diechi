@@ -4,7 +4,8 @@
 import os
 import sys
 
-os.environ['PATH'] = (r'D:\桌面\振翅新科\models\llama.cpp-cuda' + os.pathsep
+_LLAMA_CUDA_DIR = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'models', 'llama.cpp-cuda'))
+os.environ['PATH'] = (_LLAMA_CUDA_DIR + os.pathsep
                       + os.environ.get('PATH', ''))
 
 def main():

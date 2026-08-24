@@ -129,7 +129,7 @@ const WEB_SETTINGS_NAMESPACES = [
   // catalog (the store page reads it and writes refreshTick to re-scan), and
   // the reserved local-vision configuration; all three are host-plane
   // sections its settings page edits.
-  'skill-store', 'skill-market', 'skill-vision', 'skill-voice', 'skill-training',
+  'skill-store', 'skill-market', 'skill-vision', 'skill-voice', 'skill-training', 'skill-distill',
 ] as const
 
 /** Provider work budget: at most 100 calls and 2,000 inspected hits. */

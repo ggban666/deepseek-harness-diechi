@@ -1,0 +1,392 @@
+.wall {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  height: 100%;
+  overflow: auto;
+  padding: 4px 2px;
+}
+
+.sectionHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.sectionActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 全局图谱入口（阅历页顶部） */
+.graphGlobalBtn {
+  border: 1px solid var(--dsw-alias-border-l3);
+  border-radius: 8px;
+  padding: 5px 12px;
+  font-size: 12.5px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.graphGlobalBtn:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-state-business-primary);
+}
+
+.sectionTitle {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+
+.pendingBadge {
+  background: var(--dsw-alias-state-warn-tertiary);
+  color: var(--dsw-alias-state-warn-label);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 12px;
+}
+
+.emptyLine {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  padding: 16px 0;
+}
+
+/* 技能库现状 */
+.statusGrid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.statusCell {
+  min-width: 0;
+}
+
+.statusCard,
+.statusCardActive {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  height: 100%;
+  text-align: left;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, transform 0.15s ease;
+}
+
+.statusCard:hover {
+  border-color: var(--dsw-alias-state-business-primary);
+  background: var(--dsw-alias-interactive-bg-hover-accent);
+  transform: translateY(-1px);
+}
+
+.statusCardActive {
+  border-color: var(--dsw-alias-state-business-primary);
+  background: var(--dsw-alias-interactive-bg-hover-accent);
+}
+
+.statusGraphHint {
+  font-size: 11px;
+  color: var(--dsw-alias-state-business-primary);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.statusCard:hover .statusGraphHint,
+.statusCardActive:hover .statusGraphHint {
+  opacity: 1;
+}
+
+.statusHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.statusTitle {
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.onBadge {
+  flex: none;
+  font-size: 10.5px;
+  color: var(--dsw-alias-label-primary-foreground);
+  background: var(--dsw-alias-state-business-primary);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+.statusStats {
+  display: flex;
+  gap: 10px;
+}
+
+.statusStat {
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.statusStat b {
+  color: var(--dsw-alias-label-primary);
+  font-weight: 600;
+}
+
+.statusUpdated {
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* 实操时间线 */
+.timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.timelineCard {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.timelineHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.timelineTopic {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+
+.timelineStatus {
+  flex: none;
+  font-size: 11px;
+  border-radius: 999px;
+  padding: 2px 9px;
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.timelineBody {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--dsw-alias-label-secondary);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.timelineMeta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.timelineDate {
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.suggest {
+  font-size: 11px;
+  color: var(--dsw-alias-state-business-primary);
+  background: var(--dsw-alias-interactive-bg-hover-accent);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+/* 待确认徽标（低置信度归纳，人工核对前不参与注入） */
+.reviewBadge {
+  font-size: 11px;
+  color: var(--dsw-alias-state-warn-label);
+  background: var(--dsw-alias-state-warn-tertiary);
+  border: 1px solid var(--dsw-alias-state-warn-secondary);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+
+.timelineActions {
+  display: flex;
+  gap: 8px;
+}
+
+.primary {
+  border: none;
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 12.5px;
+  font-weight: 500;
+  background: linear-gradient(135deg, #8b5cf6, #a855f7);
+  color: #fff;
+  cursor: pointer;
+}
+
+.primary:hover:not(:disabled) { opacity: 0.92; }
+.primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.ghost {
+  border: 1px solid var(--dsw-alias-border-l3);
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 12.5px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+
+.ghost:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); }
+.ghost:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.ok { color: var(--dsw-alias-state-success-primary); font-size: 13px; margin: 0; }
+.error { color: var(--dsw-alias-state-error-primary); font-size: 13px; margin: 0; }
+
+/* 来源徽标（对话归纳 / 视频实操 / 联网信息 / 用户直述） */
+.sourceBadge {
+  flex: none;
+  font-size: 11px;
+  border-radius: 999px;
+  padding: 2px 9px;
+  color: var(--dsw-alias-state-business-primary);
+  background: var(--dsw-alias-interactive-bg-hover-accent);
+}
+
+.timelineHead .timelineMeta {
+  flex: none;
+  justify-content: flex-end;
+}
+
+/* 发现的新主题：反复出现但无归属，一键创建新技能 */
+.newSkillSection {
+  border: 1px dashed var(--dsw-alias-border-l3);
+  border-radius: 12px;
+  padding: 12px 14px;
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.newSkillHint {
+  font-size: 12px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.newSkillList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.newSkillItem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.newSkillName {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+
+.newSkillCount {
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
+  margin-left: auto;
+  flex: none;
+}
+
+/* 待确认记忆区（自动除幻觉标记，需用户核对） */
+.pendingMemSection {
+  border: 1px solid var(--dsw-alias-state-warn-secondary);
+  border-radius: 12px;
+  padding: 12px 14px;
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.pendingMemList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pendingMemItem {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.pendingMemHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pendingMemSkill {
+  font-size: 11px;
+  color: var(--dsw-alias-state-business-primary);
+  background: var(--dsw-alias-interactive-bg-hover-accent);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+
+.pendingMemContent {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-secondary);
+  word-break: break-word;
+}
+
+.pendingMemActions {
+  display: flex;
+  gap: 8px;
+}

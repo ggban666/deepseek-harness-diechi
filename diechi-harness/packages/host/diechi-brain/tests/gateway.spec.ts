@@ -168,4 +168,33 @@ describe('BrainGateway', () => {
       else process.env.DSH_HOME = prev
     }
   })
+
+  it('confirm 解除待确认并补归类建议；非待确认条目拒绝', async () => {
+    const home = tempHome()
+    const prev = process.env.DSH_HOME
+    process.env.DSH_HOME = home
+    try {
+      const { brain } = await harness([
+        { id: 'birthday', title: '用户信息', description: '生日、喜好等个人资料', whenToUse: '需要个人资料时' },
+      ])
+      // 模拟低置信度归纳：直接写入带待确认标记的知识。
+      const global = PersonBrain.openGlobal()
+      global.learn('对话：用户生日', '用户生日是 1994 年 3 月 8 日', 'fact', 'conversation', true)
+      global.close()
+      expect(brain.list().items[0]?.needsReview).toBe(true)
+
+      // 未知主题确认失败。
+      expect(brain.confirm({ topic: '不存在' })).toBe(false)
+      // 确认成功：待确认解除，建议归属补上。
+      expect(brain.confirm({ topic: '对话：用户生日' })).toBe(true)
+      const item = brain.list().items[0]
+      expect(item?.needsReview).toBe(false)
+      expect(item?.suggestedSkill).toBe('birthday')
+      // 已确认条目再确认失败（防重复操作）。
+      expect(brain.confirm({ topic: '对话：用户生日' })).toBe(false)
+    } finally {
+      if (prev === undefined) delete process.env.DSH_HOME
+      else process.env.DSH_HOME = prev
+    }
+  })
 })

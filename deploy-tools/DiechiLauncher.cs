@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -36,8 +36,8 @@ class DiechiLauncher
         SafeReset();
         SafeWriteLine("");
 
-        string harnessPath = @"D:\桌面\振翅新科\蝶翅-app\diechi-harness";
-        string dataHome = @"D:\桌面\振翅新科\蝶翅-app\diechi-home";
+        string harnessPath = @"D:\桌面\振翅科技\蝶翅-app\diechi-harness";
+        string dataHome = @"D:\桌面\振翅科技\蝶翅-app\diechi-home";
         string pnpmPath = @"C:\Users\wang\AppData\Roaming\npm\pnpm.cmd";
         int port = 3090;
 
@@ -55,7 +55,7 @@ class DiechiLauncher
 
             int visionPort = 8080;
             string visionPython = @"D:\vllm-env\Scripts\python.exe";
-            string visionScript = @"D:\vision-server.py";
+            string visionScript = @"D:\桌面\振翅科技\蝶翅-app\deploy-tools\vision-server.py";
             SafeWriteLine("正在停止占用端口 " + visionPort + " 的旧视觉服务...");
             HashSet<int> visionPids = FindPidsOnPort(visionPort);
             foreach (Process p in Process.GetProcessesByName("python"))
@@ -70,7 +70,7 @@ class DiechiLauncher
                 {
                     FileName = visionPython,
                     Arguments = "\"" + visionScript + "\" " + visionPort,
-                    WorkingDirectory = @"D:\",
+                    WorkingDirectory = @"D:\桌面\振翅科技\蝶翅-app\deploy-tools",
                     UseShellExecute = false,
                     CreateNoWindow = true
                 };
@@ -113,9 +113,9 @@ class DiechiLauncher
             SafeWriteLine("进程已启动 (PID: " + proc.Id + ")");
             Log("进程ID: " + proc.Id);
 
-            SafeWriteLine("等待服务启动（最多2分钟，首次启动较慢）...");
+            SafeWriteLine("等待服务启动（最多4分钟，首次 tsx 编译较慢）...");
             bool ready = false;
-            for (int i = 0; i < 120; i++)
+            for (int i = 0; i < 240; i++)
             {
                 Thread.Sleep(1000);
                 try
@@ -141,7 +141,7 @@ class DiechiLauncher
             SafeWriteLine("日志文件: " + logFile);
             SafeWriteLine("");
 
-            Log(ready ? "启动完成" : "启动超时（90 秒未就绪）");
+            Log(ready ? "启动完成" : "启动超时（240 秒未就绪）");
             Log("访问地址: http://127.0.0.1:" + port);
 
             if (ready)
@@ -150,7 +150,7 @@ class DiechiLauncher
             }
             else
             {
-                ShowError("蝶翅APP 90 秒内未能启动，请查看日志:\n" + logFile);
+                ShowError("蝶翅APP 240 秒内未能启动，请查看日志:\n" + logFile);
             }
 
             SafeWriteLine("按任意键关闭窗口...");

@@ -21,6 +21,22 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
      * package's 'sidebar' entry (declaring is claiming); ui-workspace
      * registers the browser.
      */
+    /**
+     * 蝶翅三入口导航（对话 / 平权技能 / 阅历）：sidebar 顶部的应用级 tab 条。
+     * Declared by this package's 'sidebar' entry; ui-skill-store registers it.
+     */
+    'sidebar.nav': { kind: 'list'; scope: 'root'; owner: SidebarSectionOwnerProps }
+    /**
+     * 侧边工坊面板（平权技能工坊）：位于导航条下方、会话浏览区上方。
+     * Declared by this package's 'sidebar' entry; ui-skill-store registers it.
+     */
+    'sidebar.workshop': { kind: 'single'; scope: 'root'; owner: SidebarSectionOwnerProps }
+    /**
+     * The workspace/session browsing region: section header, search, the
+     * grouped/flat session list, and every workspace dialog. Declared by this
+     * package's 'sidebar' entry (declaring is claiming); ui-workspace
+     * registers the browser.
+     */
     'sidebar.workspaces': { kind: 'single'; scope: 'root'; owner: SidebarSectionOwnerProps }
     /**
      * The settings seat at the sidebar foot. Declared by this package's
@@ -85,5 +101,5 @@ export type SidebarRootInjected = {
  */
 export type SidebarRootComponentProps =
   PropsRuntime<'sidebar'>
-  & PropsRenderSlots<'sidebar.workspaces' | 'sidebar.settings' | 'sidebar.footer.action'>
+  & PropsRenderSlots<'sidebar.nav' | 'sidebar.workshop' | 'sidebar.workspaces' | 'sidebar.settings' | 'sidebar.footer.action'>
   & SidebarRootInjected & PropsLocale<'sidebar'>

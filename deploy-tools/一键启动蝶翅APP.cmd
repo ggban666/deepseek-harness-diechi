@@ -29,7 +29,7 @@ if %ERRORLEVEL% neq 0 (
 )
 
 :: 启动蝶翅基座
-cd /d "D:\桌面\振翅新科\蝶翅-app\diechi-harness"
+cd /d "D:\桌面\振翅科技\蝶翅-app\diechi-harness"
 
 if exist "node_modules" (
     echo 检测到已安装的依赖...

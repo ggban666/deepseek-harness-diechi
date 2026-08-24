@@ -8,7 +8,6 @@ import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
-import { BrainConsole } from './BrainConsole.tsx'
 import { en, zh, type BrainConsoleLocaleKey } from './locales.ts'
 
 export type { BrainConsoleProps } from './BrainConsole.tsx'
@@ -32,6 +31,9 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-diechi-brain: dictionaries')
 
   const t = ctx.locale.bind(NS)
+  // 阅历控制台已并入 ui-skill-store 的「阅历」视图（卡片墙三入口之一），
+  // 设置页注册移除，避免重复入口。BrainConsoleController/组件保留导出供复用。
+  void t
   ctx.inject(['slots', 'locale', 'remote', 'remote.diechiBrain', 'settingsScope'], (scope: ClientContext) => {
     const brainRemote = scope.remote.diechiBrain as unknown as BrainRemote
     const skillScope = scope.settingsScope.bind({ namespace: 'skill-store' })
@@ -39,14 +41,7 @@ export function apply(ctx: ClientContext): void {
     // 平权技能目录 / 文档可写状态变化（新增、改名、勾选、权限切换）时同步控制台。
     skillScope.subscribe(() => { controller.refreshSkills(); controller.refreshWritable() })
 
-    scope.slots.inject('settings.section', () => scope.slots.register({
-      name: 'settings.section',
-      id: 'diechi-brain',
-      order: 27,
-      label: () => t('nav'),
-      locale: NS,
-      inject: (): BrainConsoleInjected => controller.inject(),
-    }, BrainConsole))
+    // 注册移除：阅历入口统一在侧边导航「阅历」。控制器仍构建以保持收件箱预热。
   })
 }
 /** 阅历控制台控制器：收件箱 RPC + 平权技能目录快照。 */
@@ -62,6 +57,7 @@ export interface BrainRemote {
   assign(input: { topic: string; skillId: string }): Promise<{ ok: true; value: BrainAssignResult } | { ok: false; error: { code: string; message: string } }>
   setTags(input: { topic: string; tags: string }): Promise<{ ok: true; value: boolean } | { ok: false; error: { code: string; message: string } }>
   removeItem(input: { topic: string }): Promise<{ ok: true; value: boolean } | { ok: false; error: { code: string; message: string } }>
+  confirm(input: { topic: string }): Promise<{ ok: true; value: boolean } | { ok: false; error: { code: string; message: string } }>
 }
 
 /** 平权技能目录条目（设置作用域快照）。 */
@@ -100,6 +96,7 @@ export interface BrainConsoleInjected {
   assign(topic: string, skillId: string): Promise<boolean>
   setTags(topic: string, tags: string): Promise<boolean>
   remove(topic: string): Promise<boolean>
+  confirm(topic: string): Promise<boolean>
 }
 
 /** 控制器：把 RPC 与设置作用域变成控制台 UI 可用的快照 + 动作。 */
@@ -164,6 +161,14 @@ export class BrainConsoleController {
     return result.value
   }
 
+  /** 确认一条待核对知识：内容无误，可参与归位与注入。 */
+  async confirm(topic: string): Promise<boolean> {
+    const result = await this.remote.confirm({ topic })
+    if (!result.ok) return false
+    await this.refresh()
+    return result.value
+  }
+
   /** 注册侧业务面：钩子 + 动作 + 只读标记。 */
   inject(): BrainConsoleInjected {
     return {
@@ -172,6 +177,7 @@ export class BrainConsoleController {
       assign: (topic, skillId) => this.assign(topic, skillId),
       setTags: (topic, tags) => this.setTags(topic, tags),
       remove: (topic) => this.remove(topic),
+      confirm: (topic) => this.confirm(topic),
     }
   }
 }

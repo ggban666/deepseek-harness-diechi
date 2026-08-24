@@ -21,7 +21,7 @@ import {
   presentStopCall, presentUndefineCall,
 } from './present.ts'
 import { CORDIS_SYSTEM_PROMPT } from './prompt.ts'
-import { hostInspectProviders } from './providers.ts'
+import { registerHostInspectProviders } from './providers.ts'
 
 export const name = 'tool-cordis'
 export const inject = ['tools', 'systemPrompt', 'dynamicCordisRunner', 'cordisInspect']
@@ -34,9 +34,9 @@ function requireAgent(exec: ToolExecution): Agent {
 /** Register the Cordis tools and explicit `@pluginId` context injection. */
 export function apply(ctx: Context): void {
   ctx.systemPrompt.section({ name: 'tool:cordis', order: 115, text: CORDIS_SYSTEM_PROMPT })
-  for (const provider of hostInspectProviders(ctx)) {
-    ctx.effect(() => ctx.cordisInspect.register(provider), `tool-cordis: inspect ${provider.manifest.id}`)
-  }
+  // Process-global registry, whole-runtime facts: a second cordis-family preset
+  // in the same process shares these registrations rather than colliding.
+  registerHostInspectProviders(ctx)
 
   ctx.tools.register(defineTool({
     name: 'cordis_inspect_list',

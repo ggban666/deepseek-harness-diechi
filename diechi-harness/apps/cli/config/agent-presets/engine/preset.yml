@@ -1,0 +1,3 @@
+name: 引擎模式
+description: 兼容标准模式与创造模式：功能完整的编码 Agent，可读写自身运行的 Harness、创作 Agent preset，并原生兼容蝶翅APP 的平权技能、全局大脑、实时视觉与语音。
+order: 5

@@ -24,7 +24,7 @@
   height: min(640px, calc(100vh - 48px));
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 12px;
-  background: var(--dsw-alias-surface-raised, #fff);
+  background: var(--dsw-alias-bg-layer-1);
   box-shadow: 0 12px 48px rgba(0, 0, 0, 0.28);
   overflow: hidden;
 }
@@ -103,7 +103,7 @@
   gap: 10px;
   padding: 10px 18px;
   border-bottom: 1px solid var(--dsw-alias-border-l1, rgba(127, 127, 127, 0.1));
-  background: var(--dsw-alias-state-business-soft, rgba(107, 70, 193, 0.08));
+  background: var(--dsw-alias-state-business-tertiary);
 }
 
 .trainingBannerText {
@@ -152,7 +152,7 @@
 .dir {
   font-size: 12px;
   color: var(--dsw-alias-label-primary);
-  background: var(--dsw-alias-surface-sunken, rgba(127, 127, 127, 0.08));
+  background: var(--dsw-alias-bg-module-platform);
   border-radius: 4px;
   padding: 2px 6px;
 }
@@ -173,7 +173,7 @@
   padding: 12px;
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 8px;
-  background: var(--dsw-alias-surface-elevated, transparent);
+  background: var(--dsw-alias-bg-layer-2);
 }
 
 .marketCardHead {
@@ -237,8 +237,8 @@
   padding: 1px 8px;
   border-radius: 999px;
   font-size: 11px;
-  background: rgba(22, 163, 74, 0.14);
-  color: #15803d;
+  background: var(--dsw-alias-state-success-tertiary);
+  color: var(--dsw-alias-state-success-primary);
 }
 
 .primary,
@@ -275,13 +275,42 @@
   padding: 14px;
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 8px;
-  background: var(--dsw-alias-surface-elevated, transparent);
+  background: var(--dsw-alias-bg-layer-2);
 }
 
 .workshopTitle {
   margin: 0;
   font-size: 14px;
   font-weight: 600;
+}
+
+/* Collapsible installed-skill header (click to expand/collapse). */
+.wsHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  margin: 0;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  text-align: left;
+  color: var(--dsw-alias-label-primary);
+}
+
+.wsChevron {
+  font-size: 12px;
+  color: var(--dsw-alias-label-tertiary);
+  transition: transform 0.15s ease;
+}
+
+.wsChevronOpen {
+  font-size: 12px;
+  color: var(--dsw-alias-label-tertiary);
+  transform: rotate(180deg);
+  transition: transform 0.15s ease;
 }
 
 .hint {
@@ -316,11 +345,11 @@
 }
 
 .ok {
-  color: #15803d;
+  color: var(--dsw-alias-state-success-primary);
 }
 
 .error {
-  color: #b91c1c;
+  color: var(--dsw-alias-state-error-primary);
 }
 /* Workshop installed-skill management list. */
 
@@ -387,8 +416,8 @@
 }
 
 .wsPendingBadge {
-  background: rgba(236, 72, 153, 0.14);
-  color: #be185d;
+  background: var(--dsw-alias-interactive-bg-hover-accent);
+  color: var(--dsw-alias-state-error-secondary);
 }
 
 .wsStatusBadge {
@@ -396,7 +425,7 @@
   border-radius: 4px;
   font-size: 11px;
   line-height: 16px;
-  background: var(--dsw-alias-surface-elevated, rgba(127, 127, 127, 0.12));
+  background: var(--dsw-alias-bg-module-platform);
   color: var(--dsw-alias-label-secondary);
 }
 
@@ -429,7 +458,7 @@
   padding: 10px 12px;
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 8px;
-  background: var(--dsw-alias-surface-sunken, transparent);
+  background: var(--dsw-alias-bg-module-platform);
 }
 
 .wsHistoryList {
@@ -466,7 +495,7 @@
   border-radius: 4px;
   font-size: 11px;
   line-height: 16px;
-  background: var(--dsw-alias-accent-soft, rgba(97, 135, 216, 0.14));
+  background: var(--dsw-alias-interactive-bg-hover-accent);
   color: var(--dsw-alias-label-primary);
 }
 
@@ -490,7 +519,7 @@
   padding: 10px 12px;
   border: 1px dashed var(--dsw-alias-border-l2);
   border-radius: 8px;
-  background: var(--dsw-alias-surface-sunken, transparent);
+  background: var(--dsw-alias-bg-module-platform);
 }
 
 .wsTextarea {
@@ -499,7 +528,7 @@
   padding: 8px 10px;
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 6px;
-  background: var(--dsw-alias-surface-raised, #fff);
+  background: var(--dsw-alias-bg-layer-1);
   color: var(--dsw-alias-label-primary);
   font: inherit;
   font-size: 13px;
@@ -531,7 +560,7 @@
   padding: 8px 10px;
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 6px;
-  background: var(--dsw-alias-surface-raised, #fff);
+  background: var(--dsw-alias-bg-layer-1);
   color: var(--dsw-alias-label-primary);
   font: inherit;
   font-size: 13px;

@@ -282,3 +282,28 @@
     animation: none;
   }
 }
+
+
+/* 蝶翅三入口导航条：位于 logo 行与 New Session 之间。 */
+.navArea {
+  flex: none;
+  min-width: 0;
+  width: 100%;
+}
+
+.collapsed .navArea {
+  display: flex;
+  justify-content: center;
+  width: auto;
+}
+
+/* 侧边工坊面板座：导航条与会话浏览区之间，随列宽走。 */
+.workshopArea {
+  flex: none;
+  min-width: 0;
+  width: 100%;
+}
+
+.collapsed .workshopArea {
+  display: none;
+}

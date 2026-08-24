@@ -46,6 +46,8 @@ export interface VisionSectionInjected {
   writable: boolean
   /** Persist a vision configuration patch. */
   setVision(patch: Partial<VisionState>): Promise<void>
+  /** Switch the backend vision model (local MiniCPM / cloud DS); takes effect immediately. */
+  setVisionModel(model: string): Promise<void>
   /** Recognize one image through the configured local vision model. */
   runRecognition(image: RecognitionImage): Promise<RecognitionResult>
   /** Upload a real video for the local vision model to understand directly. */
@@ -83,7 +85,7 @@ function readAsDataUrl(file: File): Promise<string | undefined> {
 
 /** Render one 视觉 settings page over the injected vision configuration and actions. */
 export function VisionSection({
-  t, useVision, writable, setVision, runRecognition, runVideoRecognition, runLiveFrame, openCreateDraft,
+  t, useVision, writable, setVision, setVisionModel, runRecognition, runVideoRecognition, runLiveFrame, openCreateDraft,
 }: VisionSectionProps) {
   const vision = useVision(value => value)
   const [notice, setNotice] = useState<Notice>()
@@ -392,14 +394,20 @@ export function VisionSection({
         </label>
         <label className={css.field}>
           <span className={css.fieldLabel}>{t('visionModel')}</span>
-          <input
-            type="text"
-            className={css.input}
-            value={draft.model}
-            placeholder="MiniCPM-V-4.6"
+          <select
+            className={css.select}
+            value={draft.model === 'deepseek-v4-flash-vision-exp' ? 'deepseek-v4-flash-vision-exp' : 'minicpm-v-4.6'}
             disabled={!writable}
-            onChange={(event) => setVisionDraft({ ...draft, model: event.target.value })}
-          />
+            onChange={(event) => {
+              const value = event.target.value
+              setVisionDraft({ ...draft, model: value })
+              void setVisionModel(value).catch((error) => console.error('[vision] set model failed', error))
+            }}
+          >
+            <option value="minicpm-v-4.6">{t('visionModelMini')}</option>
+            <option value="deepseek-v4-flash-vision-exp">{t('visionModelDS')}</option>
+            <option value="vlm-quant" disabled>{t('visionModelVLM')}</option>
+          </select>
         </label>
         <label className={css.field}>
           <span className={css.fieldLabel}>{t('visionInterval')}</span>

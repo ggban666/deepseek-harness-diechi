@@ -10,7 +10,7 @@ import type {
   HostObservable, InjectFace, PropsLocale, PropsRuntime,
 } from '@deepseek-ai/dsh-client-ui-slots'
 import {
-  VOICE_LOCAL_VOICES, VOICE_SAMPLE_TEXT, type VoiceState,
+  VOICE_LOCAL_VOICES, VOICE_PRESETS, VOICE_SAMPLE_TEXT, type VoiceState,
 } from './voice.ts'
 import css from './VoiceSection.module.css'
 
@@ -44,11 +44,31 @@ export function VoiceSection({ t, useVoice, writable, setVoice, speak, stopSpeak
   const [draft, setDraft] = useState<VoiceState>()
   const [notice, setNotice] = useState<Notice>()
   const [previewing, setPreviewing] = useState(false)
+  /** 本机 Kokoro 音色（服务端扫描，失败时回退内置 4 个）。 */
+  const [localVoices, setLocalVoices] = useState<readonly { readonly id: string; readonly label: string }[]>()
+  const [voiceLoadErr, setVoiceLoadErr] = useState(false)
 
   const current = draft ?? voice
   const dirty = draft !== undefined
 
   useEffect(() => () => { stopSpeaking() }, [stopSpeaking])
+
+  // 本地音色动态拉取：每次切到 local / 换端点时刷新。
+  useEffect(() => {
+    if (current.provider !== 'local') return
+    let stale = false
+    const endpoint = (current.endpoint || 'http://127.0.0.1:8080').replace(/\/+$/, '')
+    fetch(`${endpoint}/api/v1/voices`, { signal: AbortSignal.timeout(8_000) })
+      .then(response => (response.ok ? response.json() : Promise.reject(new Error('http ' + response.status))))
+      .then((payload: { voices?: { id: string; label: string }[] }) => {
+        if (stale) return
+        const list = payload.voices ?? []
+        if (list.length > 0) setLocalVoices(list)
+        else setVoiceLoadErr(true)
+      })
+      .catch(() => { if (!stale) setVoiceLoadErr(true) })
+    return () => { stale = true }
+  }, [current.provider, current.endpoint])
 
   const persist = async (): Promise<void> => {
     if (draft === undefined) return
@@ -127,6 +147,31 @@ export function VoiceSection({ t, useVoice, writable, setVoice, speak, stopSpeak
         </label>
 
         <label className={css.field}>
+          <span className={css.fieldLabel}>{t('voicePreset')}</span>
+          <select
+            className={css.select}
+            value=""
+            disabled={!writable}
+            onChange={(event) => {
+              const preset = VOICE_PRESETS.find(entry => entry.id === event.target.value)
+              if (preset !== undefined) {
+                patch({
+                  provider: preset.provider,
+                  endpoint: preset.endpoint,
+                  model: preset.model,
+                  voice: preset.voice || current.voice,
+                })
+              }
+            }}
+          >
+            <option value="">{t('voicePresetPick')}</option>
+            {VOICE_PRESETS.map(entry => (
+              <option key={entry.id} value={entry.id}>{t(entry.label)}</option>
+            ))}
+          </select>
+        </label>
+
+        <label className={css.field}>
           <span className={css.fieldLabel}>{t('voiceEndpoint')}</span>
           <input
             type="text"
@@ -174,9 +219,12 @@ export function VoiceSection({ t, useVoice, writable, setVoice, speak, stopSpeak
               disabled={!writable}
               onChange={(event) => patch({ voice: event.target.value })}
             >
-              {VOICE_LOCAL_VOICES.map(entry => (
-                <option key={entry.id} value={entry.id}>{t(entry.label)}</option>
+              {(localVoices ?? VOICE_LOCAL_VOICES.map(entry => ({ id: entry.id, label: t(entry.label) }))).map(entry => (
+                <option key={entry.id} value={entry.id}>{entry.label}</option>
               ))}
+              {voiceLoadErr && localVoices === undefined && (
+                <option value={current.voice}>{current.voice || 'zf_001'}</option>
+              )}
             </select>
           ) : (
             <input

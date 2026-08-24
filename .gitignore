@@ -45,3 +45,11 @@ CLAUDE.local.md
 
 # diechi-skill runtime memory
 diechi-skill/memory/brain.db
+
+# 云视觉配置含真实密钥，不入库（本地保留）
+deploy-tools/vision-cloud.json
+
+# Python 缓存与备份（不入库）
+__pycache__/
+*.pyc
+*.orig-modular-bak

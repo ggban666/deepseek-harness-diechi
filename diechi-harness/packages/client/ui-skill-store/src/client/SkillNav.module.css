@@ -1,0 +1,67 @@
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
+  margin-bottom: 4px;
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.tab:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.active,
+.active:hover {
+  background: var(--dsw-alias-interactive-bg-hover-accent);
+  color: var(--dsw-alias-state-business-primary);
+}
+
+.icon {
+  flex: none;
+  font-size: 15px;
+  line-height: 1;
+}
+
+.label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Rail (collapsed): vertical stack of centered icons only. */
+.rail {
+  gap: 4px;
+  padding: 6px 0;
+  border-bottom: none;
+  margin-bottom: 0;
+}
+
+.rail .tab {
+  justify-content: center;
+  width: 40px;
+  padding: 7px 0;
+}
+
+.rail .icon {
+  font-size: 17px;
+}

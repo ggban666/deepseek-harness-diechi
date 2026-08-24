@@ -2,8 +2,8 @@
 chcp 65001 >nul
 setlocal
 title Diechi App
-set "HARNESS=D:\桌面\振翅新科\蝶翅-app\diechi-harness"
-set "DSH_HOME=D:\桌面\振翅新科\蝶翅-app\diechi-home"
+set "HARNESS=D:\桌面\振翅科技\蝶翅-app\diechi-harness"
+set "DSH_HOME=D:\桌面\振翅科技\蝶翅-app\diechi-home"
 set "URL=http://127.0.0.1:3090/"
 set "PORT=3090"
 echo.
@@ -31,6 +31,7 @@ netstat -ano | findstr ":%PORT%" | findstr "LISTENING" >nul
 if %ERRORLEVEL%==0 (
   echo Service already running.
   start "" "%URL%"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0check-health.ps1"
   pause
   exit /b 0
 )
@@ -59,6 +60,7 @@ timeout /t 2 /nobreak >nul
 goto wait
 :ready
 start "" "%URL%"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0check-health.ps1"
 echo Ready.
 pause
 exit /b 0

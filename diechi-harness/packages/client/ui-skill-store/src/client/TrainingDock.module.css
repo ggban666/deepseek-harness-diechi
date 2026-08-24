@@ -8,7 +8,7 @@
   padding: 8px 14px;
   border: 1px solid var(--dsw-alias-border-l2, rgba(127, 127, 127, 0.16));
   border-radius: 10px;
-  background: var(--dsw-alias-state-business-soft, rgba(107, 70, 193, 0.08));
+  background: var(--dsw-alias-state-business-tertiary);
   font-size: 13px;
 }
 
@@ -64,4 +64,26 @@
 
 .error {
   color: var(--dsw-alias-text-danger, #c53030);
+}
+
+
+/* 「已记入大脑」提示条：对话自动归纳落库后，在当前会话输入栏上方闪现。 */
+.distill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--dsw-alias-state-business-primary, #6b46c1);
+  color: #fff;
+  font-size: 12px;
+  line-height: 20px;
+  animation: distillFade 4s ease forwards;
+}
+
+@keyframes distillFade {
+  0% { opacity: 0; transform: translateY(2px); }
+  8% { opacity: 1; transform: translateY(0); }
+  78% { opacity: 1; }
+  100% { opacity: 0; }
 }

@@ -6,15 +6,15 @@ setlocal enabledelayedexpansion
 :: 蝶翅APP 统一启动管理器 v3.0
 :: - 蝶翅APP基座 (端口3090)
 :: - 原版Harness (端口3080)
-:: - 视觉语音服务 (端口8080, D:\vision-server.py)
+:: - 视觉语音服务 (端口8080, deploy-tools\vision-server.py)
 :: =============================================
 
 :: 定义路径
-set "DIECHI_HOME=D:\桌面\振翅新科\蝶翅-app\diechi-harness"
-set "DIECHI_DATA=D:\桌面\振翅新科\蝶翅-app\diechi-home"
-set "ORIGIN_HOME=D:\桌面\振翅新科\deep seek harness\deepseek-harness-master\deepseek-harness-master"
+set "DIECHI_HOME=D:\桌面\振翅科技\蝶翅-app\diechi-harness"
+set "DIECHI_DATA=D:\桌面\振翅科技\蝶翅-app\diechi-home"
+set "ORIGIN_HOME=D:\桌面\振翅科技\deep seek harness\deepseek-harness-master\deepseek-harness-master"
 set "VISION_PY=D:\vllm-env\Scripts\python.exe"
-set "VISION_SCRIPT=D:\vision-server.py"
+set "VISION_SCRIPT=D:\桌面\振翅科技\蝶翅-app\deploy-tools\vision-server.py"
 
 :: 检查Node.js
 where node >nul 2>&1
@@ -90,28 +90,23 @@ goto menu
 
 :start_vision
 cls
-netstat -ano | findstr ":8080" | findstr "LISTENING" >nul
-if %ERRORLEVEL%==0 (
-    echo 视觉语音服务已在运行 (8080)
-) else (
-    if not exist "%VISION_PY%" (
-        echo ❌ 未找到 %VISION_PY%
-        echo   请确认 vllm-env 存在。
-        timeout /t 3 >nul
-        goto menu
-    )
-    echo 正在启动视觉语音服务 (8080)...
-    start "视觉语音服务(8080)" "%VISION_PY%" "%VISION_SCRIPT%"
-    echo 启动命令已发送，模型加载约需 10-30 秒...
+call :stop_vision
+if not exist "%VISION_PY%" (
+    echo ❌ 未找到 %VISION_PY%
+    echo   请确认 vllm-env 存在。
+    timeout /t 3 >nul
+    goto menu
 )
+echo 正在启动视觉语音服务 (8080)...
+start "视觉语音服务(8080)" "%VISION_PY%" "%VISION_SCRIPT%" 8080
+echo 启动命令已发送，模型加载约需 10-30 秒...
 timeout /t 3 >nul
 goto menu
 
 :stop_vision
 cls
-echo 停止 视觉语音服务 (端口8080)...
-for /f "tokens=5" %%P in ('netstat -ano ^| findstr ":8080" ^| findstr "LISTENING"') do taskkill /f /pid %%P >nul 2>&1
-echo 已停止视觉语音服务
+echo 停止 视觉语音服务 (8080)...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'vision-server\.py|_asr_worker\.py' } | ForEach-Object { taskkill /F /T /PID $_.ProcessId 2>$null }"
 timeout /t 2 >nul
 goto menu
 
@@ -173,7 +168,7 @@ if exist "logs" (
     echo 无日志目录
 )
 echo.
-echo 视觉语音服务日志: D:\vision-server.log / D:\vision-server.err.log
+echo 视觉语音服务日志: deploy-tools\vision-8080.log / vision-8080.err.log
 echo.
 echo 按任意键返回菜单...
 pause >nul

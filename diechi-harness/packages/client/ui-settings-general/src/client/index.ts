@@ -22,6 +22,7 @@ import type {
 } from './shell-contract.ts'
 import { SettingsRoot } from './SettingsRoot.tsx'
 import { CloseLabel, HeaderContent, TriggerContent } from './chrome.tsx'
+import { AboutSection } from './AboutSection.tsx'
 import { GeneralSection } from './GeneralSection.tsx'
 import { SettingsDocumentAction } from './SettingsDocumentAction.tsx'
 import type { SettingsDocumentActionInjected } from './SettingsDocumentAction.tsx'
@@ -34,6 +35,9 @@ export type {
 export type {
   GeneralSectionComponentProps,
 } from './GeneralSection.tsx'
+export type {
+  AboutSectionComponentProps,
+} from './AboutSection.tsx'
 export type { SettingsDocumentActionInjected, SettingsDocumentActionProps } from './SettingsDocumentAction.tsx'
 export type { SettingsDocumentState } from './settings-document-store.ts'
 export { SettingsDocumentStore } from './settings-document-store.ts'
@@ -175,4 +179,13 @@ export function apply(ctx: ClientContext): void {
     locale: NS,
     children: { 'settings.general.item': { kind: 'list', scope: 'root' } },
   }, GeneralSection))
+  // The About statement page: last in the nav, after every feature-owned
+  // section, because it speaks about the product rather than configuring it.
+  ctx.slots.inject('settings.section', () => ctx.slots.register({
+    name: 'settings.section',
+    id: 'about',
+    order: 1000,
+    label: () => t('about.nav'),
+    locale: NS,
+  }, AboutSection))
 }

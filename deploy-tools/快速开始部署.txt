@@ -46,7 +46,7 @@
 
 📌 命令行操作 (可选):
 `ash
-cd D:\桌面\振翅新科\蝶翅-app
+cd D:\桌面\振翅科技\蝶翅-app
 git init
 git remote add origin https://github.com/your-username/diechi-app.git
 git add .
@@ -131,7 +131,7 @@ git push -u origin main
 🔗 快速访问:
 - GitHub: https://github.com/new (创建仓库)
 - Vercel: https://vercel.com (部署应用)
-- 文档: D:\桌面\振翅新科\*.md
+- 文档: D:\桌面\振翅科技\*.md
 
 ---
 

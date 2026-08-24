@@ -195,7 +195,7 @@
 
 .pendingBadge {
   background: rgba(236, 72, 153, 0.14);
-  color: #be185d;
+  color: var(--dsw-alias-state-error-secondary);
 }
 
 .description {
@@ -218,11 +218,11 @@
 }
 
 .ok {
-  color: #15803d;
+  color: var(--dsw-alias-state-success-primary);
 }
 
 .error {
-  color: #b91c1c;
+  color: var(--dsw-alias-state-error-primary);
 }
 
 .info {
@@ -264,7 +264,7 @@
   padding: 1px 8px;
   border-radius: 999px;
   background: rgba(245, 158, 11, 0.16);
-  color: #b45309;
+  color: var(--dsw-alias-state-warn-label);
   font-size: 11px;
 }
 
@@ -276,7 +276,7 @@
   border-radius: 4px;
   font-size: 11px;
   line-height: 16px;
-  background: var(--dsw-alias-surface-elevated, rgba(127, 127, 127, 0.12));
+  background: var(--dsw-alias-bg-module-platform);
   color: var(--dsw-alias-label-secondary);
 }
 
@@ -326,7 +326,7 @@
   border-radius: 4px;
   font-size: 11px;
   line-height: 16px;
-  background: var(--dsw-alias-accent-soft, rgba(97, 135, 216, 0.14));
+  background: var(--dsw-alias-interactive-bg-hover-accent);
   color: var(--dsw-alias-label-primary);
 }
 
@@ -387,7 +387,7 @@
   padding: 16px;
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 12px;
-  background: var(--dsw-alias-surface-elevated, #fff);
+  background: var(--dsw-alias-bg-layer-2);
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
 }
 
@@ -418,7 +418,7 @@
 }
 
 .recBadge {
-  color: #dc2626;
+  color: var(--dsw-alias-state-error-primary);
   background: rgba(220, 38, 38, 0.12);
 }
 

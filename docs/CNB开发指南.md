@@ -17,7 +17,7 @@ Hero 文案：**蝴蝶振翅，一念换天**。
 ## 2. 技术栈
 
 - **主代码**：`diechi-harness/` —— TypeScript monorepo（DeepSeek Harness fork），pnpm workspace，Node >= 22
-- **本地视觉+语音服务**（不在仓库内）：Python + transformers 5.15 + MiniCPM-V-4.6（官方权重）+ faster-whisper + Kokoro TTS，跑在 `http://127.0.0.1:8080`，服务端脚本 `D:\vision-server.py`（本地 Windows 机器，不入库）
+- **本地视觉+语音服务**（不在仓库内）：Python + transformers 5.15 + MiniCPM-V-4.6（官方权重）+ faster-whisper + Kokoro TTS，跑在 `http://127.0.0.1:8080`，服务端脚本 `deploy-tools\vision-server.py`（本地 Windows 机器，不入库）
 - **数据目录**：`diechi-home/`（settings.yaml + 凭据 + 会话，**不入库，敏感**）
 - **前端**：`diechi-harness/apps/web`，设置页含 模型/插件/语音/视觉/Skill 设置 等
 - **端口**：3090（蝶翅基座，DSH_HOME=`diechi-home`）；原版 3080 保留
@@ -36,16 +36,16 @@ Hero 文案：**蝴蝶振翅，一念换天**。
 **硬性规则**
 - 密钥绝不明文写入代码/配置，一律用环境变量名（`apiKeyEnv`）引用。
 - 不要假设仓库里有 `diechi-home/settings.yaml`；需要改配置先看 `docs/settings.example.yaml`。
-- 本地 Windows 独有内容（`D:\vllm-env`、`D:\vision-server.py`、exe 启动器、摄像头硬件）在云端不存在，涉及这些的改动要以「可配置/可注入」方式设计，让本地能跑。
+- 本地 Windows 独有内容（`D:\vllm-env`、`deploy-tools\vision-server.py`、exe 启动器、摄像头硬件）在云端不存在，涉及这些的改动要以「可配置/可注入」方式设计，让本地能跑。
 
 ## 4. 本地如何运行（用户机器，Windows）
 
 ```powershell
 # 启动器一键起（自动拉起 8080 视觉+语音服务 + 3090 基座）
-# 双击 D:\桌面\振翅新科\蝶翅-app\蝶翅APP启动器.exe
+# 双击 D:\桌面\振翅科技\蝶翅-app\蝶翅APP启动器.exe
 # 手动方式:
-cd D:\桌面\振翅新科\蝶翅-app\diechi-harness
-$env:DSH_HOME='D:\桌面\振翅新科\蝶翅-app\diechi-home'
+cd D:\桌面\振翅科技\蝶翅-app\diechi-harness
+$env:DSH_HOME='D:\桌面\振翅科技\蝶翅-app\diechi-home'
 node --import tsx/esm apps\cli\src\bin.ts web --port 3090
 ```
 
@@ -72,7 +72,7 @@ EOF
 # 本地实测参数参考: 单图/短视频 3.1GB；视频推理帧上限 480（见 docs/开发进度跟踪.md）
 ```
 
-- 云端跑 8080 推理服务（可选）：把 `D:\vision-server.py` 的逻辑在云端用等价 Python 服务复刻（模型从 ModelScope 拉 `OpenBMB/MiniCPM-V-4_6`；注意云端无摄像头/麦克风硬件，摄像头链路只能在本地验证）。
+- 云端跑 8080 推理服务（可选）：把 `deploy-tools\vision-server.py` 的逻辑在云端用等价 Python 服务复刻（模型从 ModelScope 拉 `OpenBMB/MiniCPM-V-4_6`；注意云端无摄像头/麦克风硬件，摄像头链路只能在本地验证）。
 - 云端环境常用：`pnpm install`（diechi-harness 下）、`pnpm vitest run <spec>` 跑测试、`node --import tsx/esm apps/cli/src/bin.ts web --port 3090` 起服务冒烟。
 
 ## 6. 配置模板用法

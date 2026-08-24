@@ -169,6 +169,22 @@ export function SidebarRoot({
         </button>
       </Tooltip>
 
+      {/* 蝶翅三入口导航（对话 / 平权技能 / 阅历）：应用级 tab 条。 */}
+      <div className={css.navArea}>
+        {renderSlot('sidebar.nav', {
+          wide,
+          expandSidebar: () => { if (collapsed) toggleSidebar() },
+        })}
+      </div>
+
+      {/* 平权技能工坊（侧边面板）：已安装技能管理 / 新建 / 导入。 */}
+      <div className={css.workshopArea}>
+        {renderSlot('sidebar.workshop', {
+          wide,
+          expandSidebar: () => { if (collapsed) toggleSidebar() },
+        })}
+      </div>
+
       {/* The browsing region fills the column between the controls and the
           foot in both states; its rail icon column rides the same slot. */}
       <div className={css.regionArea}>

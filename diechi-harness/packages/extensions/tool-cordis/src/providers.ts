@@ -1,4 +1,16 @@
-/** First-party Host inspect providers registered by the Cordis tool package. */
+/**
+ * First-party Host inspect providers registered by the Cordis tool package.
+ *
+ * The `cordisInspect` registry is process-global — one directory per process,
+ * queried by the model-facing tools of every session — and the providers it
+ * carries describe the whole runtime, not one preset's view. A preset that
+ * mounts `tool-cordis` therefore registers them ONCE process-wide, and a second
+ * cordis-family preset's standing mount (for example `engine` beside `cordis`)
+ * SHARES the first mount's registrations instead of colliding on a duplicate.
+ * The shared registration outlives the second mount; standing mounts live until
+ * whole-tree teardown, so the first mount's disposer runs at the same time the
+ * registry stops mattering.
+ */
 
 import type { Context } from '@deepseek-ai/cordis'
 import { HOST_BUILTIN_INSPECTION } from '@deepseek-ai/dsh-cordis-host-runner'
@@ -92,6 +104,32 @@ function registration(
 
 function exactInput(field: string, description: string): JsonValue {
   return { type: 'object', properties: { [field]: { type: 'string', description } }, additionalProperties: false }
+}
+
+/**
+ * Register this mount's first-party Host inspect providers into the
+ * process-global registry, skipping any id the registry already carries.
+ *
+ * The registry rejects duplicate ids, and a second cordis-family preset's
+ * standing mount runs this same tool package in the same process; without the
+ * skip the second mount would fail with "already registered". Providers are
+ * whole-runtime facts, so sharing the first registration is semantically
+ * correct and leaves every session's `cordis_inspect_list`/`_query` tools
+ * working unchanged. Only Host providers are considered: a Client provider
+ * sharing an id lives in a different runtime and must not suppress a Host
+ * registration.
+ * @param ctx - Host context carrying the process-global `cordisInspect` registry.
+ */
+export function registerHostInspectProviders(ctx: Context): void {
+  const known = new Set(
+    ctx.cordisInspect.list()
+      .filter(provider => provider.platform === 'host')
+      .map(provider => provider.id),
+  )
+  for (const provider of hostInspectProviders(ctx)) {
+    if (known.has(provider.manifest.id)) continue
+    ctx.effect(() => ctx.cordisInspect.register(provider), `tool-cordis: inspect ${provider.manifest.id}`)
+  }
 }
 
 function readExact(input: JsonValue | undefined, field: string): string | undefined {

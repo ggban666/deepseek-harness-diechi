@@ -12,7 +12,8 @@ import os
 import sys
 import tempfile
 
-os.environ['PATH'] = (r'D:\桌面\振翅新科\models\llama.cpp-cuda' + os.pathsep
+_LLAMA_CUDA_DIR = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'models', 'llama.cpp-cuda'))
+os.environ['PATH'] = (_LLAMA_CUDA_DIR + os.pathsep
                       + os.environ.get('PATH', ''))
 
 def _utf8_stdio():
@@ -52,7 +53,9 @@ def main():
                 with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as f:
                     f.write(wav)
                     tmp = f.name
-                segments, _info = model.transcribe(tmp, language=None, vad_filter=True)
+                segments, _info = model.transcribe(
+                    tmp, language='zh', vad_filter=True,
+                    initial_prompt='以下是普通话的句子，请用简体中文转写。')
                 seg_list = [
                     {'start': round(seg.start, 2), 'end': round(seg.end, 2), 'text': seg.text.strip()}
                     for seg in segments if seg.text and seg.text.strip()

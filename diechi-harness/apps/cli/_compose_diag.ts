@@ -1,7 +1,7 @@
 import { loadProfile, composeEntries, loadOptionalPatches } from '@deepseek-ai/dsh-app-boot'
 import { homePatchPath, INSTALL_ANCHOR } from './src/profile-boot.ts'
 
-process.env.DSH_HOME = 'D:\\桌面\\振翅新科\\蝶翅-app\\diechi-home'
+process.env.DSH_HOME = 'D:\\桌面\\振翅科技\\蝶翅-app\\diechi-home'
 const profile = loadProfile('dsh', 'web', INSTALL_ANCHOR, undefined, { userLayer: true })
 const bundlePatches = profile.layers.flatMap(layer => layer.patches)
 const homePatches = loadOptionalPatches('dsh', homePatchPath()) ?? []
