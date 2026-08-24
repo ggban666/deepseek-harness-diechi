@@ -950,7 +950,19 @@ export function apply(ctx: Context): void {
         }
         if (!brains.has(entry.id)) {
           const dir = await materializePersonPackage(entry)
-          brains.set(entry.id, PersonBrain.open(dir))
+          const brain = PersonBrain.open(dir)
+          brains.set(entry.id, brain)
+          // 新技能出生带阅历：把全局收件箱里可归位到它的历史知识灌入
+          // （异步 fire-and-forget，不阻塞挂载；随插件生命周期兜底）。
+          void seedSkillBrain(
+            ctx,
+            entry.id,
+            entries.map(e => ({ id: e.id, title: e.title ?? '', description: e.description ?? '', whenToUse: e.whenToUse ?? '' })),
+            globalBrain,
+            brain,
+          ).catch((error: unknown) => {
+            console.warn('[skill-store] 技能出生补灌失败', entry.id, error instanceof Error ? error.message : error)
+          })
         }
         const dir = join(personsRootDir(), entry.id)
         personaTexts.set(entry.id, await readPersonaText(dir, entry.content))
@@ -1009,6 +1021,14 @@ export function apply(ctx: Context): void {
       // 刷新 RAG 装配状态：当前勾选技能列表 + 技能标题表。
       enabledSkillIds = entries.filter(entry => entry.enabled === true && active.has(entry.id)).map(entry => entry.id)
       for (const entry of entries) skillTitles.set(entry.id, entry.title)
+      // 使用痕迹：勾选挂载即计入活跃度，卡片不再因大脑内容为空而显示「从未使用」。
+      for (const id of enabledSkillIds) {
+        try {
+          brains.get(id)?.touchUsage('mount')
+        } catch {
+          // 大脑瞬时关闭：跳过，下次 sync 再记。
+        }
+      }
       syncPersona(ctx, settings, visionState, personaTexts)
     }).catch((error: unknown) => {
       console.error('skill-store: 人格包同步失败', error)
@@ -1057,6 +1077,13 @@ export function apply(ctx: Context): void {
       const pending = pendingTurns.get(sessionId)
       pendingTurns.delete(sessionId)
       void ingestTurnIntoBrains(ctx, store, globalBrain, sessionId, pending, distill)
+      // 产出沉淀：本轮产生了实际产出（写文件/提交/方案落地）时，提炼成
+      // 「产出：」知识写入全局并归位到勾选中的技能大脑——技能越用越厚。
+      if (pending !== undefined && hasWorkSignal(pending.assistant)) {
+        void ingestWorkIntoBrains(ctx, store, globalBrain, pending).catch((error: unknown) => {
+          console.warn('[skill-store] 产出沉淀失败', error instanceof Error ? error.message : error)
+        })
+      }
       // 主脑自动整理（节流）：每 5 轮归纳触发一次——合并相似记忆、清理噪音、
       // 素材足够时自动提炼实操经验。让知识系统长期保持整理态，不靠人工。
       tidyCounter += 1
@@ -1613,6 +1640,40 @@ async function classifySkill(ctx: Context, catalog: readonly { id: string; title
 }
 
 /**
+ * 技能出生补灌：新技能首次物化时，把全局收件箱里可归位到它的历史知识
+ * （status=pending 且非待确认）灌入技能大脑并标记归位，让新技能
+ * 「出生即带阅历」，而不是从零空转。返回灌入条数。
+ */
+async function seedSkillBrain(
+  ctx: Context,
+  skillId: string,
+  catalog: readonly { id: string; title: string; description: string; whenToUse: string }[],
+  globalBrain: PersonBrain,
+  brain: PersonBrain,
+): Promise<number> {
+  const pending = globalBrain.listInbox('pending', '', 200)
+    .filter(item => !item.needsReview)
+  let seeded = 0
+  for (const item of pending) {
+    try {
+      const suggested = await classifySkill(ctx, catalog, `${item.topic} ${item.content}`)
+      if (suggested !== skillId) continue
+      brain.learn(item.topic, item.content, item.tags, item.source, item.needsReview)
+      globalBrain.setPracticeMeta(item.topic, {
+        status: 'assigned',
+        suggestedSkill: skillId,
+        tags: item.tags.includes(skillId) ? item.tags : `${item.tags}, ${skillId}`,
+      })
+      seeded += 1
+      console.log(`[skill-store] 技能出生补灌 → ${skillId} ${item.topic}`)
+    } catch (error) {
+      console.warn('[skill-store] 补灌单条失败', skillId, item.topic, error instanceof Error ? error.message : error)
+    }
+  }
+  return seeded
+}
+
+/**
  * 对话自动归纳：turn/end 时把这一轮「问+答」提炼成结构化知识。
  * - 规则预筛 → LLM 提炼（topic/summary/kind/important）→ 写入全局大脑一份
  *   （不再往每个勾选技能复制，消灭 N 份拷贝与重复检索）。
@@ -1704,6 +1765,76 @@ async function ingestTurnIntoBrains(
       console.log(`[skill-store] 对话已提炼 → 全局收件箱（待归类）${topic}`)
       await publishDistill(distill, sessionId, topic, '全局收件箱')
     }
+  }
+}
+
+/** 产出信号：助手文本提到文件路径、保存/提交/完成等实际落地动作。 */
+function hasWorkSignal(assistant: string): boolean {
+  return /([A-Za-z]:[\\\/]|(?:^|\s)\/(?:[^/\s]+[/\\])+[^/\s]+|\.(?:md|ts|tsx|js|json|py|ass|srt|png|jpe?g|mp4|mp3|wav|yml|yaml|jsonl)\b|已(?:保存|写入|提交|完成|创建|修复|生成)|git commit|commit [0-9a-f]{7})/.test(assistant)
+}
+
+/** 产出提炼：LLM 判断本轮是否产生了可沉淀的产出，返回产出主题 + 一句话要点。 */
+async function distillWorkTurn(ctx: Context, user: string, assistant: string): Promise<{ topic: string; summary: string } | null> {
+  try {
+    const system = [
+      '你是蝶翅的产出记录员。判断这轮对话助手是否产生了「实际产出」：写入了文件、修复了 bug、完成了方案/文档、提交了代码、生成了作品等。',
+      '只输出一个 JSON 对象，不要输出任何其他内容：',
+      '{"hasWork":true|false,"topic":"产出主题（12 字以内，如 恐怖故事流水线实现规格）","summary":"一句话要点（80 字以内）：做了什么产出、关键产物路径或结论，含具体文件名"}',
+      '纯讨论、咨询、寒暄、尚无落地产物的对话 hasWork 为 false。',
+      'topic 禁止照抄用户原话，必须是提炼出的产出名。',
+    ].join('\n')
+    const prompt = JSON.stringify({ user: truncateText(user, 400), assistant: truncateText(assistant, 900) })
+    const text = await auxiliaryLlmText(ctx, system, prompt, 300)
+    const json = parseLlmJson(text)
+    if (json === null || json.hasWork !== true) return null
+    const topic = typeof json.topic === 'string' ? json.topic.trim().slice(0, 30) : ''
+    const summary = typeof json.summary === 'string' ? json.summary.trim().slice(0, 200) : ''
+    if (topic === '' || summary === '') return null
+    return { topic, summary }
+  } catch (error) {
+    console.warn('[skill-store] 产出提炼失败', error instanceof Error ? error.message : error)
+    return null
+  }
+}
+
+/**
+ * 产出沉淀：把「这轮完成了什么产出」写入全局大脑，并归位到勾选中的技能大脑。
+ * 沉淀的是产出本身（文件/结论/作品），不是开发过程——与对话防噪音规则不冲突，
+ * 是「技能越用越厚」的闭环通道。
+ */
+async function ingestWorkIntoBrains(
+  ctx: Context,
+  store: { get(): { skills: readonly SkillManifestEntry[] } },
+  globalBrain: PersonBrain,
+  pending: { user: string; assistant: string },
+): Promise<void> {
+  const distilled = await distillWorkTurn(ctx, pending.user, pending.assistant)
+  if (distilled === null) return
+  const topic = '产出：' + distilled.topic
+  const summary = distilled.summary
+  const catalog = store.get().skills.map(entry => ({
+    id: entry.id,
+    title: entry.title ?? '',
+    description: entry.description ?? '',
+    whenToUse: entry.whenToUse ?? '',
+  }))
+  // 全局一份（主脑归纳层）；merge=true 让相似产出主题自动并入旧条目。
+  globalBrain.learn(topic, summary, 'work', 'work', false, true)
+  // 归到勾选中的技能则写入技能大脑（该技能数据库变厚）。
+  const suggested = await classifySkill(ctx, catalog.filter(entry => !isMiscSkill(entry)), summary)
+  if (suggested !== '' && enabledSkillIds.includes(suggested)) {
+    globalBrain.setPracticeMeta(topic, { status: 'assigned', suggestedSkill: suggested, tags: `work, ${suggested}` })
+    const brain = brains.get(suggested)
+    if (brain !== undefined) {
+      try {
+        brain.learn(topic, summary, 'work', 'work')
+        console.log(`[skill-store] 产出已沉淀 → ${suggested} ${topic}`)
+      } catch (error) {
+        console.error('[skill-store] 产出归位写入失败', suggested, error)
+      }
+    }
+  } else {
+    console.log(`[skill-store] 产出已沉淀 → 全局（${suggested === '' ? '未归类' : '未勾选 ' + suggested}）${topic}`)
   }
 }
 

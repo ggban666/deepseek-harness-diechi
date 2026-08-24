@@ -117,6 +117,12 @@ CREATE TABLE IF NOT EXISTS knowledge (
   updated_at TEXT NOT NULL,
   needs_review INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS usage (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  at TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'mount'
+);
+CREATE INDEX IF NOT EXISTS idx_usage_at ON usage (at DESC);
 `
 
 /**
@@ -722,10 +728,25 @@ export class PersonBrain {
     return Number(row.n)
   }
 
-  /** 最近活动时间：记忆或知识最近写入的 ISO 时间戳。 */
+  /** 最近活动时间：记忆、知识、场景或使用痕迹最近写入的 ISO 时间戳。
+   *  usage 表让「勾选挂载/使用」本身也计入活跃度——卡片不再因大脑内容
+   *  「恰好为空」而永远显示「从未使用」。 */
   lastActivityAt(): string {
     this.assertOpen()
-    const row = this.db.prepare('SELECT MAX(ts) AS at FROM (SELECT created_at AS ts FROM memories UNION ALL SELECT updated_at AS ts FROM knowledge UNION ALL SELECT ended_at AS ts FROM scenes)').get() as { at: string | null }
+    const row = this.db.prepare('SELECT MAX(ts) AS at FROM (SELECT created_at AS ts FROM memories UNION ALL SELECT updated_at AS ts FROM knowledge UNION ALL SELECT ended_at AS ts FROM scenes UNION ALL SELECT at AS ts FROM usage)').get() as { at: string | null }
+    return typeof row.at === 'string' && row.at !== '' ? row.at : ''
+  }
+
+  /** 记录一次使用痕迹（勾选挂载 / 产出沉淀等），用于活跃度统计。 */
+  touchUsage(kind = 'mount'): void {
+    this.assertOpen()
+    this.db.prepare('INSERT INTO usage (at, kind) VALUES (?, ?)').run(new Date().toISOString(), kind)
+  }
+
+  /** 最近一次使用时间（ISO），无则空串。 */
+  lastUsageAt(): string {
+    this.assertOpen()
+    const row = this.db.prepare('SELECT MAX(at) AS at FROM usage').get() as { at: string | null }
     return typeof row.at === 'string' && row.at !== '' ? row.at : ''
   }
 
