@@ -29,10 +29,16 @@ The AI will automatically: **clone the repo → install dependencies → launch 
 
 ## 📸 界面预览 / Screenshots
 
-|  |  |
-|---|---|
-| ![主界面 · Main UI](docs/screenshot-home.png) | ![阅历控制台 · Experience Console](docs/shot-experience-hd.png) |
-| ![知识图谱 · Knowledge Graph](docs/shot-graph-hd.png) | ![设置·关于页 · Settings / About](docs/screenshot-about.png) |
+<table>
+  <tr>
+    <td align="center"><img src="docs/screenshot-home.png" alt="主界面 · Main UI" width="380"></td>
+    <td align="center"><img src="docs/shot-experience-hd.png" alt="阅历控制台 · Experience Console" width="380"></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/shot-graph-hd.png" alt="知识图谱 · Knowledge Graph" width="380"></td>
+    <td align="center"><img src="docs/screenshot-about.png" alt="设置·关于页 · Settings / About" width="380"></td>
+  </tr>
+</table>
 
 ## 为什么强大 / Why Powerful
 
