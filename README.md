@@ -31,8 +31,8 @@ The AI will automatically: **clone the repo → install dependencies → launch 
 
 |  |  |
 |---|---|
-| ![主界面 · Main UI](docs/screenshot-home.png) | ![阅历控制台 · Experience Console](docs/shot-experience.png) |
-| ![全局知识图谱 · Global Knowledge Graph](docs/shot-graph.png) | ![设置·关于页 · Settings / About](docs/screenshot-about.png) |
+| ![主界面 · Main UI](docs/screenshot-home.png) | ![阅历控制台 · Experience Console](docs/shot-experience-hd.png) |
+| ![知识图谱 · Knowledge Graph](docs/shot-graph-hd.png) | ![设置·关于页 · Settings / About](docs/screenshot-about.png) |
 
 ## 为什么强大 / Why Powerful
 
