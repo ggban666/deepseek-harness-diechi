@@ -29,7 +29,7 @@ import type {} from '@deepseek-ai/dsh-settings'
 import type {} from '@deepseek-ai/dsh-skill'
 // Type-only: session event stream for conversation auto-ingestion (对话自动归纳).
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
-import { createUserMessage, BlockAssembler } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, BlockAssembler, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type { GenerateOptions, Message } from '@deepseek-ai/dsh-llm'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -1519,32 +1519,49 @@ function worthDistilling(user: string, assistant: string): boolean {
   return false
 }
 
-/** 一次辅助 LLM 调用：给定 system + 单条用户消息，返回纯文本。失败抛错。 */
+/** 一次辅助 LLM 调用：给定 system + 单条用户消息，返回纯文本。失败抛错。
+ * 加固说明：辅助任务（对话提炼/归类/产出判断）是确定性 JSON 输出，不需要
+ * 推理思考——显式关 thinking 避免推理模式首 token 慢导致 20s 超时把归纳
+ * 链路整体掐断（表现为「对话完全没沉淀」）；超时放宽到 60s；首次失败后
+ * 按默认配置（不带 reasoningEffort）再试一次，兼容不接受显式 off 的 provider。
+ */
 async function auxiliaryLlmText(ctx: Context, system: string, prompt: string, maxTokens: number): Promise<string> {
   const route = ctx.agentDefaultModel.currentSelection()
   const messages: Message[] = [createUserMessage({
     content: [{ type: 'text', text: prompt }],
     source: { kind: 'plugin', plugin: 'skill-store' },
   })]
-  const options: GenerateOptions = {
+  const base: GenerateOptions = {
     provider: route.provider,
     model: route.model,
     messages,
     system,
     maxTokens,
-    signal: AbortSignal.timeout(20_000),
+    signal: AbortSignal.timeout(60_000),
   }
-  const assembler = new BlockAssembler()
-  for await (const chunk of ctx.llm.stream(options)) {
-    assembler.push(chunk)
+  const attempts: GenerateOptions[] = [
+    { ...base, reasoningEffort: ReasoningEffortId('off') },
+    { ...base },
+  ]
+  let lastError: unknown
+  for (const options of attempts) {
+    try {
+      const assembler = new BlockAssembler()
+      for await (const chunk of ctx.llm.stream(options)) {
+        assembler.push(chunk)
+      }
+      const blocks = assembler.blocks()
+      const text = blocks
+        .filter((block): block is Extract<(typeof blocks)[number], { type: 'text' }> => block.type === 'text')
+        .map(block => block.text)
+        .join(' ')
+      if (text.trim() !== '') return text
+      lastError = new Error('auxiliary llm produced no text')
+    } catch (error) {
+      lastError = error
+    }
   }
-  const blocks = assembler.blocks()
-  const text = blocks
-    .filter((block): block is Extract<(typeof blocks)[number], { type: 'text' }> => block.type === 'text')
-    .map(block => block.text)
-    .join(' ')
-  if (text.trim() === '') throw new Error('auxiliary llm produced no text')
-  return text
+  throw lastError instanceof Error ? lastError : new Error('auxiliary llm failed')
 }
 
 /** 解析模型返回的 JSON（容忍 ```json 围栏与前后杂文）。 */
@@ -1700,7 +1717,7 @@ async function ingestTurnIntoBrains(
     if (computeImportance(user) < 2) return
     distilled = {
       topic: truncateText(user.replace(/[，。？！\s]+/g, ' ').trim(), 20),
-      summary: `用户：${truncateText(user, 60)} → ${truncateText(assistant, 60)}`,
+      summary: `要点：用户提到「${truncateText(user, 40)}」，助手回应：${truncateText(assistant, 40)}`,
       kind: 'fact',
       important: true,
       // 规则摘要是机械拼接，不是模型提炼：一律按低置信度待用户确认。
