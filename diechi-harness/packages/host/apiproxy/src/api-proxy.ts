@@ -130,6 +130,8 @@ const WEB_SETTINGS_NAMESPACES = [
   // the reserved local-vision configuration; all three are host-plane
   // sections its settings page edits.
   'skill-store', 'skill-market', 'skill-vision', 'skill-voice', 'skill-training', 'skill-distill',
+  // 微信机器人设置页读写同段（连接状态回写 + 目标会话/触发策略配置）。
+  'wechat-bridge',
 ] as const
 
 /** Provider work budget: at most 100 calls and 2,000 inspected hits. */
