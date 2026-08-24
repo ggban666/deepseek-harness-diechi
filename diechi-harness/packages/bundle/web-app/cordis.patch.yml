@@ -118,6 +118,11 @@
     - id: diechi-brain
       name: '@deepseek-ai/dsh-host-diechi-brain'
 
+    # 微信机器人 host row（wxautox4 / 微信 4.x）：设置页可确认连接状态，
+    # 微信消息注入选定会话并回传回复。
+    - id: wechat-bridge
+      name: '@deepseek-ai/dsh-host-wechat-bridge'
+
     # ── layer 2: transport/service ──────────────────────────────────────────────
 
     # Plain route-registration carrier; host and port come from the app's
@@ -247,6 +252,10 @@
     # 阅历控制台：全局大脑实操收件箱的可视化管理（归位/改标签/删除）。
     - id: ui-diechi-brain
       name: '@deepseek-ai/dsh-client-ui-diechi-brain'
+
+    # 微信机器人设置页：连接状态确认、目标会话、触发策略与处理日志。
+    - id: ui-wechat-bridge
+      name: '@deepseek-ai/dsh-client-ui-wechat-bridge'
 
     - id: ui-subagent
       name: '@deepseek-ai/dsh-client-ui-subagent'
