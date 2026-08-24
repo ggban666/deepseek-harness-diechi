@@ -1169,6 +1169,8 @@ function defineSceneTool(getBrain: () => PersonBrain | undefined) {
           endedAt: { type: 'string', required: true },
           content: { type: 'string', required: true },
           count: { type: 'number', required: true },
+          createdAt: { type: 'string', required: true },
+          fingerprint: { type: 'string', required: true },
         },
       },
       render: (_args, value) => {
@@ -1219,6 +1221,8 @@ function defineRecallScenesTool(getBrain: () => PersonBrain | undefined) {
                 endedAt: { type: 'string', required: true },
                 content: { type: 'string', required: true },
                 count: { type: 'number', required: true },
+                createdAt: { type: 'string', required: true },
+                fingerprint: { type: 'string', required: true },
               },
             },
           },
@@ -1881,6 +1885,7 @@ function defineRememberTool(getBrain: () => PersonBrain | undefined) {
           source: { type: 'string', required: true },
           topic: { type: 'string', required: true },
           createdAt: { type: 'string', required: true },
+          needsReview: { type: 'boolean', required: true },
         },
       },
       render: (_args, value) => {
@@ -1895,7 +1900,7 @@ function defineRememberTool(getBrain: () => PersonBrain | undefined) {
       const kind = typeof input.kind === 'string' && input.kind.trim() !== '' ? input.kind.trim() : 'episodic'
       // 幻觉防线：记忆内容以「用户…」猜测句式开头（模型推断而非用户陈述）时拒绝写入。
       if (/^(用户(应该|可能|大概|似乎|估计|好像|或许|也许)|我猜|我觉得用户|推测)/.test(content)) {
-        return { id: 0, kind, content, importance: 0, source: 'rejected-hallucination', topic: '', createdAt: '' }
+        return { id: 0, kind, content, importance: 0, source: 'rejected-hallucination', topic: '', createdAt: '', needsReview: false }
       }
       const brain = getBrain()
       if (brain === undefined) {
@@ -2211,7 +2216,10 @@ function defineRecallTool(getBrain: () => PersonBrain | undefined, getPractice: 
                 kind: { type: 'string', required: true },
                 content: { type: 'string', required: true },
                 importance: { type: 'number', required: true },
+                source: { type: 'string', required: true },
+                topic: { type: 'string', required: true },
                 createdAt: { type: 'string', required: true },
+                needsReview: { type: 'boolean', required: true },
               },
             },
           },
@@ -2225,7 +2233,11 @@ function defineRecallTool(getBrain: () => PersonBrain | undefined, getPractice: 
                 topic: { type: 'string', required: true },
                 content: { type: 'string', required: true },
                 tags: { type: 'string', required: true },
+                status: { type: 'string', required: true },
+                suggestedSkill: { type: 'string', required: true },
+                source: { type: 'string', required: true },
                 updatedAt: { type: 'string', required: true },
+                needsReview: { type: 'boolean', required: true },
               },
             },
           },
