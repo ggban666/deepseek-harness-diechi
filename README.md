@@ -1,12 +1,24 @@
 # 🦋 蝶翅APP · DeepSeek Harness (DSH) 改版整合版
 
-> 基于 DeepSeek Harness（DSH）基座改造的一键启动 AI 工作台 —— [GitHub 开源仓库](https://github.com/ggban666/diechi-dsh) | ⭐ Star 支持
+> **Diechi APP — a one-click integrated edition of DeepSeek Harness (DSH)**｜基于 DeepSeek Harness 基座改造的一键启动 AI 工作台 —— [GitHub 开源仓库](https://github.com/ggban666/deepseek-harness-diechi) | ⭐ Star 支持
+
+[![Base: DeepSeek Harness](https://img.shields.io/badge/Base-DeepSeek%20Harness-blue)](https://github.com/deepseek-ai/deepseek-harness) [![License: MIT](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
 蝶翅APP 是基于 DeepSeek Harness（`dsh`）基座改造的**一键启动整合版**：以 DSH 为基座，融入 MiniCPM-V 本地实时视觉、Kokoro 语音、平权技能体系、全局大脑与多 Agent 预设，双击启动器即可体验开箱即用的完整 AI 助手平台。
 
 - 基座源码：`diechi-harness/`（可改）
 - 数据目录：`diechi-home/`（即 `$DSH_HOME`）
 - 访问地址：http://127.0.0.1:3090/
+
+## 🚀 一键安装：把链接扔给 AI
+
+把下面的链接复制给任意 AI 助手（DeepSeek / Claude / ChatGPT 等），它就能自动帮你完成安装：
+
+```
+https://github.com/ggban666/deepseek-harness-diechi
+```
+
+AI 会自动执行：**克隆仓库 → 安装依赖 → 启动 Web（:3090）与视觉语音服务（:8080）**，开箱即用。
 
 ## 为什么强大
 
