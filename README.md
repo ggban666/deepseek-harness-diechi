@@ -1,6 +1,6 @@
-# 🦋 蝶翅APP
+# 🦋 蝶翅APP · DeepSeek Harness (DSH) 改版整合版
 
-> 基于 DeepSeek Harness（DSH）基座的一键启动 AI 工作台 —— [GitHub 开源仓库](https://github.com/ggban666/diechi) | ⭐ Star 支持
+> 基于 DeepSeek Harness（DSH）基座改造的一键启动 AI 工作台 —— [GitHub 开源仓库](https://github.com/ggban666/diechi-dsh) | ⭐ Star 支持
 
 蝶翅APP 是基于 DeepSeek Harness（`dsh`）基座改造的**一键启动整合版**：以 DSH 为基座，融入 MiniCPM-V 本地实时视觉、Kokoro 语音、平权技能体系、全局大脑与多 Agent 预设，双击启动器即可体验开箱即用的完整 AI 助手平台。
 

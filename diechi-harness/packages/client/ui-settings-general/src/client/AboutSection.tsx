@@ -23,7 +23,7 @@ const FEATURES: readonly { title: SettingsKey; body: SettingsKey }[] = [
 ]
 
 /** Public open-source repository of this integrated edition. */
-const GITHUB_REPO_URL = 'https://github.com/ggban666/diechi'
+const GITHUB_REPO_URL = 'https://github.com/ggban666/diechi-dsh'
 
 /**
  * Render the About section content column.
