@@ -20,6 +20,12 @@ https://github.com/ggban666/deepseek-harness-diechi
 
 AI 会自动执行：**克隆仓库 → 安装依赖 → 启动 Web（:3090）与视觉语音服务（:8080）**，开箱即用。
 
+## 📸 界面预览
+
+![蝶翅APP 主界面](docs/screenshot-home.png)
+
+![蝶翅APP 设置·关于页](docs/screenshot-about.png)
+
 ## 为什么强大
 
 - **以 DSH 为基座**：完整保留 DeepSeek Harness 的 Cordis 插件化架构 —— 标准 / 创造 / 引擎三模式合一，Agent 可读写自身运行所在的 Harness。
