@@ -2,4 +2,15 @@
 # mount 顺序要求：必须在 @deepseek-ai/dsh-host-skill-store 之前。
 # 理由：PersonBrain.learn / remember 在缺 ctx.supervision 时抛错，
 # 而 skill-store 启动时会 PersonBrain.open()。
-[]
+#
+# 空数组 `[]` 的含义是「本 bundle 不加载任何插件」。
+# 光把包名写进 profile 的 dsh.profile.bundles 只决定 patch 层的**应用顺序**，
+# 真正让插件进 cordis 的是本文件里的声明。
+#
+# 必须用 `- insert:`：裸 `- id:` 的语义是「按 id 修改**已存在**的 entry」，
+# 用于覆盖别的层声明过的行；新增行要用 insert，否则报
+# `entry "diechi-supervisor" not found` 并被静默跳过。
+# （2026-08-29 端到端验证时在这两个坑上都栽过，故留此注。）
+- insert:
+    - id: diechi-supervisor
+      name: '@deepseek-ai/dsh-host-diechi-supervisor'

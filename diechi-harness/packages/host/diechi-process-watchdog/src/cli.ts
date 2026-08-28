@@ -21,6 +21,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { cp, access } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { createWatchdogService } from './index.ts'
 import { NegativeSampleWriter } from './supervisor.ts'
 import { killProcess, probeCommand, probePort, spawnDetached } from './process.ts'
@@ -225,9 +226,11 @@ export async function main(): Promise<void> {
 const isDirectRun = ((): boolean => {
   const entry = process.argv[1]
   if (entry === undefined) return false
-  const normalized = entry.replace(/\\/g, '/')
-  const asUrl = normalized.startsWith('/') ? `file://${normalized}` : `file:///${normalized}`
-  return import.meta.url === asUrl
+  // 两处都必须处理，否则进程会静默退出（用户以为有人守着，其实没有）：
+  // 1. argv[1] 可能是相对路径 —— `node --import tsx packages/.../cli.ts` 给的就是相对路径。
+  // 2. import.meta.url 是 percent-encoded 的 file: URL（中文路径会变成 %E6%A1%8C...），
+  //    手工拼 `file:///...` 永远比不上。必须用 pathToFileURL 生成，它会做同样的编码。
+  return import.meta.url === pathToFileURL(resolve(entry)).href
 })()
 
 if (isDirectRun) {

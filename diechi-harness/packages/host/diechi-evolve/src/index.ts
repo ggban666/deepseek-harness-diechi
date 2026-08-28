@@ -33,8 +33,15 @@ export type * from './types.ts'
 /** Cordis 插件名。 */
 export const name = 'diechi-evolve'
 
-/** 必需服务。 */
-export const inject = ['settings']
+/**
+ * 必需服务。
+ *
+ * `supervision` 必须声明：evolve 的职责就是消费监督者的负样本，
+ * 不声明的话 cordis 不保证 provide 已完成，即便挂载顺序在 supervisor 之后，
+ * apply 里 `ctx.get('supervision')` 仍可能拿到 undefined
+ * （2026-08-29 端到端验证实测：漏声明时启动就报「未发现 ctx.supervision」）。
+ */
+export const inject = ['settings', 'supervision']
 
 /** ctx.evolution Service 接口（暴露给 host 与 diechi-supervisor 的 P3 reviewProposal 工具）。 */
 export interface EvolutionServiceInterface {

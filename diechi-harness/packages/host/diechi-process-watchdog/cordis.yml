@@ -7,4 +7,10 @@
 # 注意：本包挂载到 cordis 只提供 ctx.watchdog Service（供监督者写信号用）。
 # 真正的守护主循环跑在独立进程里（src/cli.ts）——因为在 DSH 进程内跑的话，
 # DSH 一崩 watchdog 也死，"任一角色死了其他能接住"就永远不成立。
-[]
+#
+# 空数组 `[]` 的含义是「本 bundle 不加载任何插件」，必须显式列出插件行，
+# 且新增行要用 `- insert:`（裸 `- id:` 只用于修改已存在的行）。
+# 见 diechi-supervisor/cordis.yml 里的同名说明。
+- insert:
+    - id: diechi-process-watchdog
+      name: '@deepseek-ai/dsh-host-diechi-process-watchdog'
