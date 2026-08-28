@@ -18,6 +18,15 @@ import { mkdirSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import {
+  SupervisionContext,
+  SupervisionMissingError,
+  SupervisionDeniedError,
+  type SupervisionDecision,
+  type SupervisionInput,
+} from './supervision.ts'
+import type { AgentRoleService } from './role.ts'
+import type { WorldModelService, PredictInput, PredictOutput } from './world-model.ts'
 
 /** 一条人格记忆（recall 的返回单元）。 */
 export interface PersonMemory {
@@ -93,7 +102,8 @@ CREATE TABLE IF NOT EXISTS memories (
   created_at TEXT NOT NULL,
   source TEXT NOT NULL DEFAULT 'user',
   topic TEXT NOT NULL DEFAULT '',
-  needs_review INTEGER NOT NULL DEFAULT 0
+  needs_review INTEGER NOT NULL DEFAULT 0,
+  supervision_decision TEXT NOT NULL DEFAULT 'allow'
 );
 CREATE INDEX IF NOT EXISTS idx_memories_created ON memories (created_at DESC);
 CREATE TABLE IF NOT EXISTS scenes (
@@ -115,7 +125,8 @@ CREATE TABLE IF NOT EXISTS knowledge (
   suggested_skill TEXT NOT NULL DEFAULT '',
   source TEXT NOT NULL DEFAULT 'video',
   updated_at TEXT NOT NULL,
-  needs_review INTEGER NOT NULL DEFAULT 0
+  needs_review INTEGER NOT NULL DEFAULT 0,
+  supervision_decision TEXT NOT NULL DEFAULT 'allow'
 );
 CREATE TABLE IF NOT EXISTS usage (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -135,9 +146,47 @@ export class PersonBrain {
   private readonly db: DatabaseSync
   private closed = false
 
+  /**
+   * 监督者上下文：cordis 启动时由 dsh-host-diechi-supervisor 注入一次。
+   * 缺它时 learn / remember / seeScene 在未挂监督者前会抛
+   * SupervisionMissingError——这是基座保护的物理实现。
+   */
+  private supervision: SupervisionContext | undefined
+
+  /**
+   * 角色可互换上下文（可选）：cordis 启动时由 supervisor 注入。
+   * 注入后 gateWrite 的 source 字段会带 'role:<current>' 标识，
+   * 让 supervisor.decide() 能检测"临时身份批自己"场景。
+   */
+  private agentRole: AgentRoleService | undefined
+
+  /**
+   * WorldModelService（可选）：被升级者"使用"的物理推演服务。
+   * 不注入时 predict() 抛错——基座保护"未注入世界模型 = 不能用"。
+   */
+  private worldModel: WorldModelService | undefined
+
   private constructor(dir: string, db: DatabaseSync) {
     this.dir = dir
     this.db = db
+  }
+
+  /** 注入角色可互换上下文（可选）。 */
+  setAgentRoleContext(role: AgentRoleService): void {
+    this.agentRole = role
+  }
+
+  /** 注入世界模型服务（可选）。 */
+  setWorldModelContext(wm: WorldModelService): void {
+    this.worldModel = wm
+  }
+
+  /**
+   * 注入监督者上下文。由 diechi-supervisor 在 cordis 启动时调一次；
+   * 业务插件不应调用此方法。
+   */
+  setSupervisionContext(ctx: SupervisionContext): void {
+    this.supervision = ctx
   }
 
   /**
@@ -149,14 +198,14 @@ export class PersonBrain {
     mkdirSync(dir, { recursive: true })
     const db = new DatabaseSync(join(dir, 'brain.db'))
     // 迁移必须先于 BRAIN_SCHEMA：旧库缺列时 CREATE INDEX（fingerprint）会先失败。
-    for (const column of ['tags TEXT NOT NULL DEFAULT \'\'', 'status TEXT NOT NULL DEFAULT \'pending\'', 'suggested_skill TEXT NOT NULL DEFAULT \'\'', 'source TEXT NOT NULL DEFAULT \'video\'', 'needs_review INTEGER NOT NULL DEFAULT 0']) {
+    for (const column of ['tags TEXT NOT NULL DEFAULT \'\'', 'status TEXT NOT NULL DEFAULT \'pending\'', 'suggested_skill TEXT NOT NULL DEFAULT \'\'', 'source TEXT NOT NULL DEFAULT \'video\'', 'needs_review INTEGER NOT NULL DEFAULT 0', 'supervision_decision TEXT NOT NULL DEFAULT \'allow\'']) {
       try {
         db.exec(`ALTER TABLE knowledge ADD COLUMN ${column}`)
       } catch {
         // 已存在（新库 CREATE 已含），忽略。
       }
     }
-    for (const column of ['source TEXT NOT NULL DEFAULT \'user\'', 'topic TEXT NOT NULL DEFAULT \'\'', 'needs_review INTEGER NOT NULL DEFAULT 0']) {
+    for (const column of ['source TEXT NOT NULL DEFAULT \'user\'', 'topic TEXT NOT NULL DEFAULT \'\'', 'needs_review INTEGER NOT NULL DEFAULT 0', 'supervision_decision TEXT NOT NULL DEFAULT \'allow\'']) {
       try {
         db.exec(`ALTER TABLE memories ADD COLUMN ${column}`)
       } catch {
@@ -174,6 +223,13 @@ export class PersonBrain {
       db.exec('PRAGMA journal_mode = WAL')
     } catch {
       // 只读文件系统等场景忽略，退回默认 journal。
+    }
+    // busy_timeout：多连接并发写同一库（常驻连接 + 归纳/整理的瞬时连接）时，
+    // 写锁冲突先等待重试而非立即抛 SQLITE_BUSY——未捕获会带崩整个进程。
+    try {
+      db.exec('PRAGMA busy_timeout = 5000')
+    } catch {
+      // 极老版本 SQLite 不支持时忽略，退回立即报错行为。
     }
     return new PersonBrain(dir, db)
   }
@@ -203,6 +259,10 @@ export class PersonBrain {
    */
   remember(content: string, kind = 'episodic', importance = 1, source = 'user', topic = '', needsReview = false): PersonMemory {
     this.assertOpen()
+    // 三架构基座保护：写入前过监督者闸。缺监督者 = 拒绝。
+    const supervisionDecision = this.gateWrite('person-brain:remember', { content, kind, importance, source, topic })
+    // flag-review 升级 needs_review=1：监督者说"待审"则业务层不再静默写入。
+    const effectiveNeedsReview = needsReview || supervisionDecision === 'flag-review'
     const createdAt = new Date().toISOString()
     const safeImportance = Math.max(1, Math.min(5, Math.trunc(importance) || 1))
     // 永久去重：完全相同的记忆只保留一条（重要性取 max，刷新时间）。
@@ -211,10 +271,10 @@ export class PersonBrain {
     ).get(content)
     if (existing !== undefined) {
       const row = existing as { id: number; kind: string; content: string; importance: number; created_at: string; needs_review: number }
-      if (safeImportance > row.importance || source !== 'user' || needsReview) {
-        this.db.prepare('UPDATE memories SET importance = ?, source = ?, topic = ?, created_at = ?, needs_review = ? WHERE id = ?')
-          .run(Math.max(row.importance, safeImportance), source, topic, createdAt, needsReview ? 1 : row.needs_review, row.id)
-        return toMemory({ ...row, importance: Math.max(row.importance, safeImportance), source, topic, created_at: createdAt, needs_review: needsReview ? 1 : row.needs_review })
+      if (safeImportance > row.importance || source !== 'user' || effectiveNeedsReview) {
+        this.db.prepare('UPDATE memories SET importance = ?, source = ?, topic = ?, created_at = ?, needs_review = ?, supervision_decision = ? WHERE id = ?')
+          .run(Math.max(row.importance, safeImportance), source, topic, createdAt, effectiveNeedsReview ? 1 : row.needs_review, supervisionDecision, row.id)
+        return toMemory({ ...row, importance: Math.max(row.importance, safeImportance), source, topic, created_at: createdAt, needs_review: effectiveNeedsReview ? 1 : row.needs_review })
       }
       return toMemory(row)
     }
@@ -224,13 +284,13 @@ export class PersonBrain {
     if (similar !== undefined) {
       const keep = similar.content.length >= content.length ? similar.content : content
       const mergedImportance = Math.max(similar.importance, safeImportance)
-      this.db.prepare('UPDATE memories SET content = ?, importance = ?, source = ?, topic = ?, created_at = ?, needs_review = ? WHERE id = ?')
-        .run(keep, mergedImportance, source, topic, createdAt, needsReview ? 1 : similar.needsReview ? 1 : 0, similar.id)
-      return toMemory({ id: similar.id, kind, content: keep, importance: mergedImportance, source, topic, createdAt, needs_review: needsReview ? 1 : similar.needsReview ? 1 : 0 })
+      this.db.prepare('UPDATE memories SET content = ?, importance = ?, source = ?, topic = ?, created_at = ?, needs_review = ?, supervision_decision = ? WHERE id = ?')
+        .run(keep, mergedImportance, source, topic, createdAt, effectiveNeedsReview ? 1 : similar.needsReview ? 1 : 0, supervisionDecision, similar.id)
+      return toMemory({ id: similar.id, kind, content: keep, importance: mergedImportance, source, topic, createdAt, needs_review: effectiveNeedsReview ? 1 : similar.needsReview ? 1 : 0 })
     }
     const result = this.db.prepare(
-      'INSERT INTO memories (kind, content, importance, created_at, source, topic, needs_review) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    ).run(kind, content, safeImportance, createdAt, source, topic, needsReview ? 1 : 0)
+      'INSERT INTO memories (kind, content, importance, created_at, source, topic, needs_review, supervision_decision) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    ).run(kind, content, safeImportance, createdAt, source, topic, effectiveNeedsReview ? 1 : 0, supervisionDecision)
     return {
       id: Number(result.lastInsertRowid),
       kind,
@@ -403,6 +463,9 @@ export class PersonBrain {
    */
   learn(topic: string, content: string, tags = '', source = 'video', needsReview = false, merge = false): void {
     this.assertOpen()
+    // 三架构基座保护：写入前过监督者闸。缺监督者 = 拒绝。
+    const supervisionDecision = this.gateWrite('person-brain:learn', { topic, content, tags, source, merge })
+    const effectiveNeedsReview = needsReview || supervisionDecision === 'flag-review'
     const updatedAt = new Date().toISOString()
     const cleanTopic = topic.trim()
     const cleanTags = tags.trim()
@@ -412,15 +475,15 @@ export class PersonBrain {
         // 新主题：与已有条目高度相似 → 合并更新旧条目，避免重复沉淀。
         const similar = this.findSimilarTopic(cleanTopic, content)
         if (similar !== '') {
-          this.mergeKnowledge(similar, content, cleanTags, updatedAt, needsReview)
+          this.mergeKnowledge(similar, content, cleanTags, updatedAt, effectiveNeedsReview)
           return
         }
       }
     }
     this.db.prepare(
-      'INSERT INTO knowledge (topic, content, tags, source, updated_at, needs_review) VALUES (?, ?, ?, ?, ?, ?) '
-      + 'ON CONFLICT(topic) DO UPDATE SET content = excluded.content, tags = excluded.tags, source = excluded.source, updated_at = excluded.updated_at, needs_review = excluded.needs_review',
-    ).run(cleanTopic, content, cleanTags, source, updatedAt, needsReview ? 1 : 0)
+      'INSERT INTO knowledge (topic, content, tags, source, updated_at, needs_review, supervision_decision) VALUES (?, ?, ?, ?, ?, ?, ?) '
+      + 'ON CONFLICT(topic) DO UPDATE SET content = excluded.content, tags = excluded.tags, source = excluded.source, updated_at = excluded.updated_at, needs_review = excluded.needs_review, supervision_decision = excluded.supervision_decision',
+    ).run(cleanTopic, content, cleanTags, source, updatedAt, effectiveNeedsReview ? 1 : 0, supervisionDecision)
   }
 
   /**
@@ -584,6 +647,10 @@ export class PersonBrain {
    */
   seeScene(content: string, fingerprint = ''): PersonScene {
     this.assertOpen()
+    // P3.5 蝶擎感知层：视觉流入口加闸。视频流是高频调用（默认 8s 一次），
+    // 监督者决策是 deterministic 查表（不调 LLM），单次 ~微秒级，不会拖慢视觉流。
+    // 未授权 scope（如未启用视觉开关的写入尝试）→ flag-review，不写库。
+    this.gateWrite('person-brain:see-scene', { content: content.slice(0, 200), fingerprint: fingerprint.slice(0, 64) })
     const now = new Date()
     const createdAt = now.toISOString()
     const clean = content.trim()
@@ -650,6 +717,30 @@ export class PersonBrain {
    * @param content - 场景描述。
    * @returns true 表示值得单独展示。
    */
+  /**
+   * 调用世界模型做物理 / 因果 / 时序推演。
+   *
+   * 三架构语义：
+   * - **被升级者**"使用"世界模型：业务调 predict 拿预测结果
+   * - **监督者**"控制"世界模型：未授权 / frozen 都不让调
+   * - **升级设计者**"提议"世界模型行为变更：看到 10+ 次推演错误就提 freeze 提议
+   *
+   * 入口闸与 learn/remember/seeScene 一致：frozen → deny，authorizations → allow，
+   * 默认 → deny + 写 negative_samples。
+   *
+   * 未注入 worldModel 时抛错（基座保护"无世界模型 = 不可推演"）。
+   */
+  async predict(scope: string, input: PredictInput): Promise<PredictOutput> {
+    this.assertOpen()
+    if (this.worldModel === undefined) {
+      throw new Error('PersonBrain: WorldModelService 未注入。三架构要求被升级者必须被授权才能使用世界模型。')
+    }
+    // 入口闸：和 learn/remember/seeScene 完全一致
+    this.gateWrite(scope, { lookahead: input.lookahead, stateKeys: Object.keys(input.state) })
+    // 闸通过 → 调世界模型
+    return this.worldModel.predict(input)
+  }
+
   isInformativeScene(content: string): boolean {
     const clean = content.trim()
     if (clean === '') return false
@@ -775,6 +866,35 @@ export class PersonBrain {
     if (this.closed) {
       throw new Error('person brain is closed')
     }
+  }
+
+  /**
+   * 基座保护闸：缺监督者时拒绝一切业务写入。
+   * 这是"三架构 = 不可绕过的基座"的物理实现——业务插件改不动
+   * 这个调用顺序，监督者也没法把自己绕过。
+   */
+  private assertSupervision(): void {
+    if (this.supervision === undefined) {
+      throw new SupervisionMissingError()
+    }
+  }
+
+  /**
+   * 业务写入的统一闸入口：先 assert 监督者存在，再 decide。
+   * 返回的 decision 字符串直接落到对应业务表的 supervision_decision 列。
+   * - 'deny' 抛 SupervisionDeniedError，不写库。
+   * - 'flag-review' / 'allow' 走正常流程，由调用方在 INSERT 时写列。
+   */
+  private gateWrite(scope: string, payload: Readonly<Record<string, unknown>>): SupervisionDecision {
+    this.assertSupervision()
+    // P3：携带当前角色到 source 字段，supervisor.decide() 据此做"批自己"检测
+    const role = this.agentRole?.current() ?? 'subject'
+    const input: SupervisionInput = { scope, payload, source: `person-brain:role:${role}` }
+    const result = this.supervision!.decide(input)
+    if (result.decision === 'deny') {
+      throw new SupervisionDeniedError(result.reason ?? 'unspecified')
+    }
+    return result.decision
   }
 }
 

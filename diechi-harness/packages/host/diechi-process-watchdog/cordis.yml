@@ -1,0 +1,10 @@
+# dsh bundle: diechi-process-watchdog
+# mount 顺序要求：必须在 @deepseek-ai/dsh-host-diechi-supervisor 之后、
+# @deepseek-ai/dsh-host-diechi-evolve 之前。
+# 理由：watchdog 写 negative_samples 需要 supervisor 先建好表；
+# evolve 读负样本生成提议，需要 watchdog 的崩溃记录先进表。
+#
+# 注意：本包挂载到 cordis 只提供 ctx.watchdog Service（供监督者写信号用）。
+# 真正的守护主循环跑在独立进程里（src/cli.ts）——因为在 DSH 进程内跑的话，
+# DSH 一崩 watchdog 也死，"任一角色死了其他能接住"就永远不成立。
+[]

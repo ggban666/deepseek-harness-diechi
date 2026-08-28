@@ -52,6 +52,14 @@ declare module '@deepseek-ai/cordis' {
     agentDefaultModel: {
       currentSelection(): { provider: string; model: string; reasoningEffort?: string }
     }
+    /**
+     * diechi-supervisor 提供的 ctx.supervision（基座保护层）。
+     * 启动时由 dsh-host-diechi-supervisor 注入；
+     * skill-store 启动后会把所有 open 的 PersonBrain attach 到它上面。
+     */
+    supervision?: {
+      attachBrain(brain: { setSupervisionContext(ctx: unknown): void }): void
+    }
   }
 }
 
@@ -745,7 +753,16 @@ export function apply(ctx: Context): void {
   // 全局大脑（$DSH_HOME/brain.db）：对话提炼/视频实操/联网知识的统一收件箱，
   // 自动归类后归位到技能大脑；随插件生命周期释放句柄。
   const globalBrain = PersonBrain.openGlobal()
-  ctx.effect(() => () => { globalBrain.close() }, 'skill-store: 释放全局大脑')
+  // 三架构基座保护：把全局大脑接入 ctx.supervision（由 dsh-host-diechi-supervisor 注入）。
+  // 若 ctx.supervision 不存在（如未挂监督者），PersonBrain 写入时仍会抛 SupervisionMissingError——
+  // 这是基座保护的核心：不挂监督者 = 拒绝一切业务写入。
+  ctx.effect(() => {
+    const supervision = ctx.get('supervision')
+    if (supervision !== undefined) {
+      supervision.attachBrain(globalBrain)
+    }
+    return () => { globalBrain.close() }
+  }, 'skill-store: 接入监督者并释放全局大脑')
 
   // 主脑自动整理节流计数：每 5 轮成功归纳触发一次 tidy（合并/清理/提炼）。
   let tidyCounter = 0
@@ -951,6 +968,11 @@ export function apply(ctx: Context): void {
         if (!brains.has(entry.id)) {
           const dir = await materializePersonPackage(entry)
           const brain = PersonBrain.open(dir)
+          // 三架构基座保护：把人格大脑也接入 ctx.supervision。
+          const supervision = ctx.get('supervision')
+          if (supervision !== undefined) {
+            supervision.attachBrain(brain)
+          }
           brains.set(entry.id, brain)
           // 新技能出生带阅历：把全局收件箱里可归位到它的历史知识灌入
           // （异步 fire-and-forget，不阻塞挂载；随插件生命周期兜底）。
@@ -993,8 +1015,9 @@ export function apply(ctx: Context): void {
                 ctx,
                 (id) => skillTitles.get(id) ?? id,
                 (id) => collectSkillMaterials(id, globalBrain, (pid) => {
-                  const resident = brains.get(pid)
-                  if (resident !== undefined) return resident
+                  // 只开瞬时连接：collectSkillMaterials 会在 finally 里 close 返回值，
+                  // 常驻句柄交出去会被误关且不会重开，之后记忆操作全部抛
+                  // "person brain is closed"。
                   try {
                     return PersonBrain.open(join(personsRootDir(), pid))
                   } catch { return undefined }
@@ -1076,7 +1099,9 @@ export function apply(ctx: Context): void {
     } else if (event.type === 'turn/end' && event.data.reason.kind === 'completed') {
       const pending = pendingTurns.get(sessionId)
       pendingTurns.delete(sessionId)
-      void ingestTurnIntoBrains(ctx, store, globalBrain, sessionId, pending, distill)
+      void ingestTurnIntoBrains(ctx, store, globalBrain, sessionId, pending, distill).catch((error: unknown) => {
+        console.warn('[skill-store] 对话归纳失败', error instanceof Error ? error.message : error)
+      })
       // 产出沉淀：本轮产生了实际产出（写文件/提交/方案落地）时，提炼成
       // 「产出：」知识写入全局并归位到勾选中的技能大脑——技能越用越厚。
       if (pending !== undefined && hasWorkSignal(pending.assistant)) {
@@ -1091,8 +1116,8 @@ export function apply(ctx: Context): void {
         tidyCounter = 0
         const activeIds = [...skillTitles.keys()]
         void tidyBrains(ctx, globalBrain, (id) => {
-          const resident = brains.get(id)
-          if (resident !== undefined) return resident
+          // 只开瞬时连接：tidyBrains 各阶段会在 finally 里 close 返回值，
+          // 交出常驻句柄会被误关且 sync 的 !brains.has 判断不会重开。
           try {
             return PersonBrain.open(join(personsRootDir(), id))
           } catch { return undefined }

@@ -1,0 +1,49 @@
+{
+  "name": "@deepseek-ai/dsh-host-diechi-evolve",
+  "description": "三架构升级设计者插件：读 ctx.supervision 的负样本，按 reason 聚类，写 proposals 表。等人工 review 后由监督者落 frozen_rules / authorizations。P2 阶段：最小可用 analyzeNegativeSamples + propose + reviewProposal。",
+  "version": "0.1.0-rc.5",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "directory": "packages/host/diechi-evolve"
+  },
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./types": {
+      "types": "./lib/types/types.d.ts",
+      "default": "./lib/types/types.js"
+    }
+  },
+  "files": [
+    "lib/index.js",
+    "lib/types/**/*.js",
+    "lib/types/**/*.d.ts"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.yml"
+    }
+  },
+  "license": "MIT",
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "workspace:^",
+    "@deepseek-ai/dsh-host-skill-store": "workspace:^",
+    "@deepseek-ai/dsh-invariants": "workspace:^",
+    "@deepseek-ai/dsh-host-diechi-supervisor": "workspace:^"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "workspace:^",
+    "@deepseek-ai/dsh-host-skill-store": "workspace:^",
+    "@deepseek-ai/dsh-invariants": "workspace:^",
+    "@deepseek-ai/dsh-host-diechi-supervisor": "workspace:^"
+  }
+}

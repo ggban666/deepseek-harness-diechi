@@ -1,0 +1,43 @@
+{
+  "name": "@deepseek-ai/dsh-host-diechi-process-watchdog",
+  "description": "三架构进程级守护：独立 Node 进程，探活 DSH 主进程 + 消费监督者升级信号；崩溃时写 negative_samples 并拉起新进程。必须跑在 DSH 进程之外——否则 DSH 崩溃时 watchdog 会跟着一起死。",
+  "version": "0.1.0-rc.5",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "directory": "packages/host/diechi-process-watchdog"
+  },
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./types": {
+      "types": "./lib/types/types.d.ts",
+      "default": "./lib/types/types.js"
+    }
+  },
+  "files": [
+    "lib/index.js",
+    "lib/types/**/*.js",
+    "lib/types/**/*.d.ts"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.yml"
+    }
+  },
+  "license": "MIT",
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "workspace:^"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "workspace:^"
+  }
+}

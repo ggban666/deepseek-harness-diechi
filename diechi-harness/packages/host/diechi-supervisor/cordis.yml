@@ -1,0 +1,5 @@
+# dsh bundle: diechi-supervisor
+# mount 顺序要求：必须在 @deepseek-ai/dsh-host-skill-store 之前。
+# 理由：PersonBrain.learn / remember 在缺 ctx.supervision 时抛错，
+# 而 skill-store 启动时会 PersonBrain.open()。
+[]

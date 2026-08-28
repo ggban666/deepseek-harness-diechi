@@ -1,0 +1,49 @@
+{
+  "name": "@deepseek-ai/dsh-host-diechi-supervisor",
+  "description": "三架构监督者插件：提供 ctx.supervision Service（decide / freezeRule / authorize / reviewProposal），维护 frozen_rules / authorizations / negative_samples / proposals 四张表。P0 阶段：仅实现基础 decide + bootstrap，不包含升级设计者与角色可互换。",
+  "version": "0.1.0-rc.5",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "directory": "packages/host/diechi-supervisor"
+  },
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./types": {
+      "types": "./lib/types/types.d.ts",
+      "default": "./lib/types/types.js"
+    }
+  },
+  "files": [
+    "lib/index.js",
+    "lib/types/**/*.js",
+    "lib/types/**/*.d.ts"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.yml"
+    }
+  },
+  "license": "MIT",
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "workspace:^",
+    "@deepseek-ai/cordis-plugin-loader": "workspace:^",
+    "@deepseek-ai/dsh-host-skill-store": "workspace:^",
+    "@deepseek-ai/dsh-invariants": "workspace:^"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "workspace:^",
+    "@deepseek-ai/cordis-plugin-loader": "workspace:^",
+    "@deepseek-ai/dsh-host-skill-store": "workspace:^",
+    "@deepseek-ai/dsh-invariants": "workspace:^"
+  }
+}

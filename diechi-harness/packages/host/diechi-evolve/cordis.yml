@@ -1,0 +1,4 @@
+# dsh bundle: diechi-evolve
+# 必须在 @deepseek-ai/dsh-host-diechi-supervisor 之后 mount（依赖 ctx.supervision）。
+# 不需要比 skill-store 早——它不直接接触 PersonBrain。
+[]
