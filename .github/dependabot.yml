@@ -1,4 +1,11 @@
 version: 2
+# P3.12（2026-08-29）会话期关闭：
+# 仓库当前没有跑依赖相关 CI（npm/cargo CI 是 vendor 流程不依赖 registry 升级；
+# github-actions workflow 也不需要自动升级——本地 Watchdog 跑就好）。
+# 5 个 open dependabot PR（PR #1-#5）来自 2026-08-24 fork 之后第一次 push trigger。
+# 暂禁用：新 PR 不开；旧的 5 个由人类手动 close。
+# 将来真要启 CI 时，把 enabled: true 加回或删掉这个文件。
+enabled: false
 
 updates:
   - package-ecosystem: "npm"
