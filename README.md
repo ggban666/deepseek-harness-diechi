@@ -48,6 +48,7 @@ The AI will automatically: **clone the repo → install dependencies → launch 
 - **语音对话**：Kokoro 中文 TTS + ASR，可听、可说、可对话。**Voice**: Kokoro Chinese TTS + ASR — it listens, speaks and converses.
 - **平权技能**：一个技能 = 数据库（大脑）+ 能力（工具）+ 人格（提示词），勾选即热装载成完整的人。**Egalitarian skills**: one skill = database (brain) + capability (tools) + persona (prompt); check it and a complete persona hot-loads.
 - **全局大脑**：跨人格实操阅历层，对话自动归纳沉淀，越用越懂你。**Global brain**: cross-persona experience layer; conversations are distilled automatically.
+- **三架构自进化基座**：被升级者 / 监督者 / 升级设计者三角色闭环，watchdog 进程外守护 —— 任一角色死了其他能接住，升级必留痕、坏补丁自动降级。**Three-architecture self-evolving base**: upgrader / supervisor / upgrade-designer closed loop, guarded by an out-of-process watchdog — when any role dies the others catch it; every upgrade leaves an audit trail and bad patches degrade gracefully.
 - **多 Agent 预设**：标准 / 创造 / 引擎三模式，子代理并行与工作流编排。**Multi-agent presets** with parallel subagents and workflow orchestration.
 
 ## 核心概念：平权技能 / Core Concept: Egalitarian Skills
@@ -63,6 +64,23 @@ The AI will automatically: **clone the repo → install dependencies → launch 
 - 勾选即热装载，取消即热卸载，切换平权技能 = 切换一个完整的人。Check to hot-load, uncheck to hot-unload — switching skills is switching people.
 - 对话过程中自动归纳（RAG）：每轮「用户问 + 助手答」结束自动沉淀入脑，数据库因使用而成长。Conversations are distilled (RAG) into the brain automatically, which grows with use.
 - 视频投喂识别带 `#实操` 标签，与理论知识区分，自动入库并可归位到技能。Video feeding recognition tags `#实操` (practice), kept apart from theory, auto-archived and reassignable to skills.
+
+## 核心概念：三架构自进化基座 / Core Concept: Three-Architecture Self-Evolving Base
+
+**主张：三架构 = 被升级者 + 升级设计者 + 监督者，是 AGI 的充分必要条件。**
+（诚实标注：这是主张不是定理，充分性证明目前无人能给出。
+Claim, not theorem — no sufficiency proof exists yet, and we say so.）
+
+| 角色 / Role | 职责 / Duty | 实现 / Implementation |
+| --- | --- | --- |
+| **被升级者 / Upgraded** | 日常运行载体 / daily runtime | DSH 主进程（:3090） |
+| **监督者 / Supervisor** | 写入闸 + 冻结规则 + 负样本；决策为确定性查表，不调 LLM（防奖励黑客） | `diechi-supervisor` 插件 |
+| **升级设计者 / Upgrade Designer** | 负样本聚类 → 生成改进提议 | `diechi-evolve` 插件 |
+
+- **基座保护**：`frozen_rules` / `authorizations` 只接受人类令牌（`callerToken='human'`）写入，任何代码路径都拿不到合法 token；业务插件缺 `ctx.supervision` 即抛错降级只读。**Base protection**: frozen rules and authorizations accept writes only from the human token — no code path can forge it.
+- **进程外守护**：`diechi-process-watchdog` 是独立 Node 进程（非 cordis 插件）—— DSH 崩溃自动拉起（崩溃自愈），监督者写升级信号文件即可触发「杀 → 换补丁 → 拉起」的信号驱动升级；坏补丁自动跳过并降级，绝不无限重试。**Out-of-process watchdog**: an independent Node process — crash self-healing, signal-driven upgrades (kill → patch → relaunch), and graceful degradation on bad patches.
+- **升级必留痕**：计划内升级刻意不记负样本（human 授权动作不该被当失败聚类），但每次事件都写入 `history.jsonl` 审计底账。**Audited upgrades**: planned upgrades never pollute the negative-sample store, but every event lands in the `history.jsonl` audit log.
+- 深入阅读 / Read more：[三架构与watchdog总览](diechi-harness/docs/三架构与watchdog总览.md) · [监督者工程白皮书](diechi-harness/docs/diechi-supervisor-design.md) · [协作机制](diechi-harness/docs/diechi-supervisor-evolve.md) · [被升级者能力清单](diechi-harness/docs/三架构越来越大-被升级者能力清单.md)
 
 ## 功能总览 / Features
 
