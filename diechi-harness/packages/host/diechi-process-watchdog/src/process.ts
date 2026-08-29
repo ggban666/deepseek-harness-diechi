@@ -11,7 +11,8 @@
  * @module @deepseek-ai/dsh-host-diechi-process-watchdog/process
  */
 
-import { spawn, execFile, openSync } from 'node:child_process'
+import { spawn, execFile } from 'node:child_process'
+import { openSync } from 'node:fs'
 import { connect } from 'node:net'
 import { promisify } from 'node:util'
 import { appendFileSync, mkdirSync } from 'node:fs'
