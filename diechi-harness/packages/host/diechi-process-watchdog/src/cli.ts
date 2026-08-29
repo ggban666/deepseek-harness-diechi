@@ -169,10 +169,13 @@ function createRealDeps(config: WatchdogConfig): WatchdogDeps & { dispose(): voi
       } catch {
         throw new Error(`DSH CLI 入口不存在：${binPath}（检查 DIECHI_HARNESS_PATH 是否指向 diechi-harness）`)
       }
-      const child = spawnDetached(process.execPath, [binPath, 'web', '--port', String(config.port)], config.harnessPath, {
-        ...process.env,
-        DSH_HOME: config.dshHome,
-      })
+      const child = spawnDetached(
+        process.execPath,
+        [binPath, 'web', '--port', String(config.port)],
+        config.harnessPath,
+        { ...process.env, DSH_HOME: config.dshHome },
+        config.dshHome,  // 缺口 2 修：传 dshHome 让 stdio 重定向到 .watchdog/dsh.log
+      )
       log(`已拉起新 DSH（PID ${child.pid ?? 'unknown'}，端口 ${config.port}）`)
     },
 

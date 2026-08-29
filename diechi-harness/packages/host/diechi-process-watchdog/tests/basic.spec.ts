@@ -23,7 +23,7 @@
 
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, writeFile, mkdir } from 'node:fs/promises'
+import { mkdtemp, writeFile, mkdir, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { runOnce, startWatchdog } from '../src/watchdog.ts'
@@ -208,7 +208,9 @@ describe('startWatchdog', () => {
     const h = makeDeps()
 
     const handle = startWatchdog({ ...BASE_CONFIG, probeIntervalSec: 1 }, h.deps)
-    await new Promise<void>((done) => setTimeout(done, 60))
+    // 等 1.2s —— probeIntervalSec=1 + interruptibleSleep 200ms slice
+    // 60ms 实际只跑第一段 sleep slice，probe 还没触发
+    await new Promise<void>((done) => setTimeout(done, 1200))
     handle.stop()
     await handle.done
 
@@ -288,6 +290,57 @@ describe('NegativeSampleWriter', () => {
 
     assert.equal(writer.recordRestart('watchdog-restart', {}), null)
     assert.deepEqual(writer.listRestarts(10), [])
+  })
+})
+
+describe('history.jsonl audit (缺口 1 修)', () => {
+  it('有升级信号时 watchdog 写一行 signal-consumed 审计', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'watchdog-history-'))
+    const config: WatchdogConfig = { ...BASE_CONFIG, dshHome: dir }
+    const signal = makeSignal({ version: 'v9.9.9', reason: 'audit-test' })
+    const h = makeDeps({
+      readSignal: fn(async () => signal) as unknown as WatchdogDeps['readSignal'],
+    })
+
+    await runOnce(config, h.deps)
+
+    const historyPath = join(dir, '.watchdog', 'history.jsonl')
+    const content = await readFile(historyPath, 'utf8')
+    const lines = content.split('\n').filter((l) => l.length > 0)
+    assert.equal(lines.length, 1, '应恰好写一行')
+    const entry = JSON.parse(lines[0]!) as { stage: string; version: string; reason: string; ts: string }
+    assert.equal(entry.stage, 'signal-consumed')
+    assert.equal(entry.version, 'v9.9.9')
+    assert.equal(entry.reason, 'audit-test')
+    assert.match(entry.ts, /^\d{4}-\d{2}-\d{2}T/)  // ISO 时间戳
+  })
+
+  it('崩溃探活时也写一行 watchdog-restart 审计（除了 negative_samples）', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'watchdog-history-crash-'))
+    const config: WatchdogConfig = { ...BASE_CONFIG, dshHome: dir }
+    const h = makeDeps({ probe: fn(async () => false) as unknown as WatchdogDeps['probe'] })
+
+    await runOnce(config, h.deps)
+
+    const historyPath = join(dir, '.watchdog', 'history.jsonl')
+    const content = await readFile(historyPath, 'utf8')
+    const lines = content.split('\n').filter((l) => l.length > 0)
+    // **缺口 1 修前**：崩溃路径不写审计 → 只能从 recordRestart 推
+    // **缺口 1 修后**：崩溃路径也写 history.jsonl（但 negative_samples 仍走 recordRestart）
+    // 此测试断 history.jsonl 至少有 1 行（崩溃审计）
+    assert.ok(lines.length >= 1, '崩溃审计应至少写一行')
+  })
+
+  it('DSH 活着时 history.jsonl 不被创建（无事件不写）', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'watchdog-history-alive-'))
+    const config: WatchdogConfig = { ...BASE_CONFIG, dshHome: dir }
+    const h = makeDeps()
+
+    await runOnce(config, h.deps)
+
+    // 活着不写 — 也不创建 .watchdog 目录
+    const fs = await import('node:fs/promises')
+    await assert.rejects(fs.access(join(dir, '.watchdog', 'history.jsonl')))
   })
 })
 

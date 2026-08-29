@@ -11,9 +11,11 @@
  * @module @deepseek-ai/dsh-host-diechi-process-watchdog/process
  */
 
-import { spawn, execFile } from 'node:child_process'
+import { spawn, execFile, openSync } from 'node:child_process'
 import { connect } from 'node:net'
 import { promisify } from 'node:util'
+import { appendFileSync, mkdirSync } from 'node:fs'
+import { dirname } from 'node:path'
 import type { ChildProcess } from 'node:child_process'
 
 const execFileAsync = promisify(execFile)
@@ -118,20 +120,47 @@ export async function killProcess(pid: number, gracefulMs = 2000): Promise<void>
  * 拉起 DSH。detached + unref，让子进程独立于 watchdog 存活 ——
  * 否则 watchdog 退出时会把刚拉起的 DSH 一起带走。
  *
+ * 缺口 2 修：stdin 丢弃（不阻塞 DSH 启动），stdout/stderr 重定向到
+ * `$DSH_HOME/.watchdog/dsh.log` 与 `dsh.err.log`（append 模式，多次重启不丢历史）。
+ * 升级补丁导致 DSH 起不来时，运维能 tail 日志看到报错 —— 不再静默。
+ *
  * @param command 可执行文件，比如 `pnpm` 或 `process.execPath`。
  * @param args 参数，比如 `['exec','dsh','web','--port','3090']`。
+ * @param dshHome `$DSH_HOME` —— 用于定位 .watchdog 目录。
  */
 export function spawnDetached(
   command: string,
   args: readonly string[],
   cwd: string,
   env: NodeJS.ProcessEnv = process.env,
+  dshHome?: string,
 ): ChildProcess {
+  let stdio: 'ignore' | [typeof process.stdin, number, number]
+  if (dshHome) {
+    const dir = `${dshHome}/.watchdog`
+    try {
+      mkdirSync(dir, { recursive: true })
+      // append 模式 — O_APPEND 多进程安全；mode 0o644 跨用户可读便于 cat
+      const out = openSync(`${dir}/dsh.log`, 'a')
+      const err = openSync(`${dir}/dsh.err.log`, 'a')
+      stdio = ['ignore', out, err]
+      appendFileSync(
+        `${dir}/history.jsonl`,
+        JSON.stringify({ ts: new Date().toISOString(), stage: 'dsh-spawn', pid: null, command, args: [...args] }) + '\n',
+        'utf8',
+      )
+    } catch {
+      // 日志路径建失败退回 ignore —— 不能因为审计失败阻止 watchdog
+      stdio = 'ignore'
+    }
+  } else {
+    stdio = 'ignore'
+  }
   const child = spawn(command, args as string[], {
     cwd,
     env,
     detached: true,
-    stdio: 'ignore',
+    stdio,
     windowsHide: true,
   })
   child.unref()

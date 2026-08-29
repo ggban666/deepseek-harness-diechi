@@ -9,6 +9,7 @@
  */
 
 import { join } from 'node:path'
+import { appendFile, mkdir } from 'node:fs/promises'
 import type {
   ProbeOutcome,
   RestartReason,
@@ -30,6 +31,11 @@ export function signalDir(dshHome: string): string {
 /** 升级信号文件路径。 */
 export function signalPath(dshHome: string): string {
   return join(signalDir(dshHome), 'update.signal')
+}
+
+/** 升级审计日志路径：每次 restart 追加一行 JSONL。 */
+export function historyPath(dshHome: string): string {
+  return join(signalDir(dshHome), 'history.jsonl')
 }
 
 /** 默认配置。probeIntervalSec 取 30 —— 与执行说明的验证标准「30s 内拉起」对齐。 */
@@ -56,6 +62,13 @@ export async function runOnce(config: WatchdogConfig, deps: WatchdogDeps): Promi
     // 探活发现 DSH 没起来，自然会用 watchdog-restart 再拉一次，且不带坏补丁。
     await deps.clearSignal()
     deps.log(`检测到升级信号 v${signal.version}（${signal.reason}），开始计划内重启`)
+    // 缺口 1 修：写审计底账（即使 signal 即将被消费）。
+    await appendHistory(deps, config, {
+      stage: 'signal-consumed',
+      version: signal.version,
+      reason: signal.reason,
+      patchPath: signal.patchPath ?? null,
+    })
     await safeRestart(signal, 'signal-restart', deps)
     return { kind: 'signalled', signal }
   }
@@ -70,6 +83,8 @@ export async function runOnce(config: WatchdogConfig, deps: WatchdogDeps): Promi
     port: config.port,
     at: new Date().toISOString(),
   })
+  // 缺口 1 修：崩溃审计也写 history.jsonl（便于回看「DSH 何时挂的」）
+  await appendHistory(deps, config, { stage: 'watchdog-restart', port: config.port })
   await safeRestart(null, reason, deps)
   return { kind: 'restarted', reason }
 }
@@ -84,6 +99,29 @@ async function safeRestart(
     await deps.restart(signal, reason)
   } catch (error) {
     deps.log(`重启失败（${reason}）：${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
+/** 缺口 1 修：写 history.jsonl 审计底账。失败也不抛（审计失败不能拖垮主循环）。 */
+async function appendHistory(
+  deps: WatchdogDeps,
+  config: WatchdogConfig,
+  entry: {
+    stage: 'signal-consumed' | 'watchdog-restart' | 'signal-restart-failed' | 'dsh-spawn-failed'
+    version?: string
+    reason?: string
+    patchPath?: string | null
+    port?: number
+    exitCode?: number | null
+  },
+): Promise<void> {
+  try {
+    // appendFile 不创建父目录 —— 历史首次写之前先 mkdir -p
+    await mkdir(signalDir(config.dshHome), { recursive: true })
+    const line = JSON.stringify({ ts: new Date().toISOString(), ...entry }) + '\n'
+    await appendFile(historyPath(config.dshHome), line, 'utf8')
+  } catch (error) {
+    deps.log(`写 history.jsonl 失败：${error instanceof Error ? error.message : String(error)}`)
   }
 }
 

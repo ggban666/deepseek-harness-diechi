@@ -51,6 +51,7 @@ describe('diechi-supervisor / tools', () => {
         'supervisor_authorize_scope',
         'supervisor_revoke_authorization',
         'supervisor_review_proposal',
+        'supervisor_signal_update_ready',
       ])
       unreg()
     } finally {
