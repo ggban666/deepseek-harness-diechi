@@ -21,6 +21,7 @@ import type { SupervisionContext } from '@deepseek-ai/dsh-host-skill-store'
 import type { AgentRoleService } from '@deepseek-ai/dsh-host-skill-store'
 import { SupervisorDb } from './db.ts'
 import { SupervisorService } from './service.ts'
+import { EvolutionGateway } from './gateway.ts'
 import { registerSupervisorTools } from './tools.ts'
 import { AgentRoleServiceImpl } from './role.ts'
 import { HeuristicWorldModel } from './world-model.ts'
@@ -30,6 +31,15 @@ import type { SupervisorBootstrapConfig } from './types.ts'
 export { SupervisorDb } from './db.ts'
 export { SupervisorService } from './service.ts'
 export type { SupervisorLike } from './service.ts'
+export { EvolutionGateway } from './gateway.ts'
+export type {
+  BootstrapAuthorization, BootstrapFrozenRule, EvolutionCbsOutcome, EvolutionCbsView,
+  EvolutionHistoryPoint, EvolutionProposalView, EvolutionSignalTally, EvolutionSnapshot,
+  SupervisorBootstrapConfig,
+} from './types.ts'
+export { CapabilityGate } from './gate.ts'
+export type { GateConfig, GateInput, GateResult, GateVerdict, RegressionDetail, CostDetail } from './gate.ts'
+export type { PositiveSignal, PositiveSampleRow, CapabilitySnapshotRow } from './types.ts'
 export { AgentRoleServiceImpl, RoleAlreadySwappedError } from './role.ts'
 export { HeuristicWorldModel } from './world-model.ts'
 
@@ -44,6 +54,9 @@ const DEFAULT_BOOTSTRAP: SupervisorBootstrapConfig = {
   freeze: [
     { id: 'person-brain:learn.policy.pii-redaction', reason: '基座规则：所有 learn() 必须经过 PII 扫描' },
     { id: 'person-brain:remember.policy.pii-redaction', reason: '基座规则：所有 remember() 必须经过 PII 扫描' },
+    // A2 硬顶：成本绝对上限写进 frozen_rules，沿用"只有 callerToken='human' 能写"的保护机制。
+    // 没有硬顶，只做 ±20% 相对约束会让成本每次 +19% 棘轮式爬升，一百次后翻百万倍。
+    { id: 'capability:cost.k-max', reason: '基座规则：A2 成本硬顶 K_max=2.0，代码路径不可改（防棘轮）' },
   ],
   authorize: [
     { scope: 'person-brain:remember', reason: '用户直述记忆默认授权' },
@@ -85,6 +98,12 @@ export function apply(ctx: Context): void {
   // 把 ctx.supervision 与 ctx.agentRole 提供给后续插件。
   ctx.provide('supervision', service as unknown as SupervisionContext)
   ctx.provide('agentRole', agentRole as unknown as AgentRoleService)
+
+  // S4 可感知层：度量 RPC 网关（remote.diechiEvolution）。
+  // 构造即向 Typert 网关注册，前端包通过 ctx.remote.diechiEvolution 读 C(t)/K(t)。
+  // 刻意放在 supervision 之后——网关要读 ctx.get('evolution')，那时 evolve 还没装，
+  // 但它是软依赖（每次查询时现取），所以顺序不敏感。
+  new EvolutionGateway(ctx, db, service)
 
   // P3.7：注入世界模型（HeuristicWorldModel 占位）+ 提供 ctx.worldModel
   // 业务侧可自己实现 WorldModelService 接口并通过 setWorldModel 替换——本插件只提供默认。

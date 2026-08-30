@@ -12,6 +12,7 @@
 import { DatabaseSync } from 'node:sqlite'
 import { join } from 'node:path'
 import { mkdirSync } from 'node:fs'
+import type { CapabilitySnapshotRow, PositiveSampleRow, PositiveSignal } from './types.ts'
 
 /** schema 列表——每个新表都要在这里登记，CREATE IF NOT EXISTS。 */
 const SUPERVISOR_SCHEMA = `
@@ -48,6 +49,26 @@ CREATE TABLE IF NOT EXISTS proposals (
   reviewed_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_proposals_status ON proposals (status, created_at DESC);
+CREATE TABLE IF NOT EXISTS positive_samples (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  scope TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  signal TEXT NOT NULL,
+  latency_ms INTEGER,
+  cost_units REAL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_positive_samples_scope ON positive_samples (scope, created_at DESC);
+CREATE TABLE IF NOT EXISTS capability_snapshots (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  at TEXT NOT NULL,
+  cbs_version TEXT NOT NULL,
+  c_score REAL NOT NULL,
+  k_score REAL NOT NULL,
+  sample_count INTEGER NOT NULL,
+  commit_id TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_capability_snapshots_at ON capability_snapshots (at DESC);
 `
 
 /** 监督者数据层句柄。 */
@@ -126,6 +147,20 @@ export class SupervisorDb {
     ).get(scope) as { granted_by: string; granted_at: string } | undefined
   }
 
+  /**
+   * 列出全部未撤销的授权。
+   *
+   * 存在的理由：CBS 沙盒要把当前规则集复制到副本库上跑基准，
+   * 必须能把生产库的授权整表读出来。此前只有按 scope 的单条查询，
+   * 沙盒无法还原完整规则状态。
+   */
+  listAuthorizations(): readonly { scope: string; granted_by: string; granted_at: string }[] {
+    this.assertOpen()
+    return this.db.prepare(
+      'SELECT scope, granted_by, granted_at FROM authorizations WHERE revoked_at IS NULL ORDER BY scope',
+    ).all() as unknown as readonly { scope: string; granted_by: string; granted_at: string }[]
+  }
+
   /** 撤销授权（要求 caller='human'；本方法本身不鉴权）。 */
   revokeAuthorization(scope: string): boolean {
     this.assertOpen()
@@ -156,6 +191,18 @@ export class SupervisorDb {
     return Number(result.lastInsertRowid)
   }
 
+  /**
+   * 负样本总数。
+   *
+   * 走 COUNT(*) 而不是 list().length：度量面板每几秒抓一次，
+   * 把整表拉进内存只为数个数是不可接受的。
+   */
+  countNegativeSamples(): number {
+    this.assertOpen()
+    const row = this.db.prepare('SELECT COUNT(*) AS c FROM negative_samples').get() as { c: number } | undefined
+    return row?.c ?? 0
+  }
+
   /** 列出最近 N 条负样本。 */
   listNegativeSamples(limit = 100): readonly {
     id: number
@@ -178,6 +225,147 @@ export class SupervisorDb {
       source: string
       created_at: string
     }[]
+  }
+
+  // ---- positive_samples ----
+  // S1（成功路径采集）：没有正样本就没有"什么是对的"，固化通道无从谈起。
+  // signal 取值：'accepted' | 'no-rework' | 'user-undo' | 'explicit-bad'
+  // 前两个是正样本，后两个是负样本（记在这里而非 negative_samples，因为它们来自用户体感而非闸拦截）。
+
+  /**
+   * 写入一条用户体感样本。payload 必须已 JSON.stringify 过。
+   * @returns 写入后的自增 id。
+   */
+  insertPositiveSample(
+    scope: string,
+    payload: string,
+    signal: PositiveSignal,
+    latencyMs?: number,
+    costUnits?: number,
+  ): number {
+    this.assertOpen()
+    const result = this.db.prepare(
+      'INSERT INTO positive_samples (scope, payload, signal, latency_ms, cost_units, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+    ).run(
+      scope,
+      payload,
+      signal,
+      latencyMs === undefined ? null : latencyMs,
+      costUnits === undefined ? null : costUnits,
+      new Date().toISOString(),
+    )
+    return Number(result.lastInsertRowid)
+  }
+
+  /** 列出最近 N 条体感样本。 */
+  listPositiveSamples(limit = 100): readonly PositiveSampleRow[] {
+    this.assertOpen()
+    return this.db.prepare(
+      'SELECT id, scope, payload, signal, latency_ms, cost_units, created_at FROM positive_samples ORDER BY id DESC LIMIT ?',
+    ).all(limit) as unknown as readonly PositiveSampleRow[]
+  }
+
+  /**
+   * 统计某段时间内各信号的数量——C(t) 的分子分母从这里出。
+   * @param sinceMs 起始毫秒时间戳；undefined 表示不限。
+   */
+  countSignalsByKind(sinceMs?: number): Readonly<Record<PositiveSignal, number>> {
+    this.assertOpen()
+    const rows = (
+      sinceMs === undefined
+        ? this.db.prepare('SELECT signal, COUNT(*) AS n FROM positive_samples GROUP BY signal').all()
+        : this.db
+            .prepare('SELECT signal, COUNT(*) AS n FROM positive_samples WHERE created_at >= ? GROUP BY signal')
+            .all(new Date(sinceMs).toISOString())
+    ) as unknown as readonly { signal: string; n: number }[]
+    const out: Record<PositiveSignal, number> = { accepted: 0, 'no-rework': 0, 'user-undo': 0, 'explicit-bad': 0 }
+    for (const row of rows) {
+      if (row.signal in out) out[row.signal as PositiveSignal] = Number(row.n)
+    }
+    return out
+  }
+
+  /** 清理过期体感样本（保留最近 keepCount 条）。返回清理条数。 */
+  cleanupPositiveSamples(keepCount = 20000): number {
+    this.assertOpen()
+    const keep = Math.max(0, Math.trunc(keepCount))
+    const result = this.db
+      .prepare(
+        'DELETE FROM positive_samples WHERE id NOT IN (SELECT id FROM positive_samples ORDER BY id DESC LIMIT ?)',
+      )
+      .run(keep)
+    return Number(result.changes)
+  }
+
+  // ---- capability_snapshots ----
+  // S0（度量层）：C(t) 一次通过率 / K(t) 归一化成本 的时间序列。
+  // 没有这两列，A1 单调性与 A2 有界性在工程上无法表达，更无法验证。
+
+  /**
+   * 写一次基准回归的结果。
+   * @param cbsVersion 冻结基准集版本（如 'CBS-v1'）——基准集只增不改，换版要发新号。
+   * @param cScore 一次通过率 0..1（A1 守卫对象）。
+   * @param kScore 归一化单次成本（A2 守卫对象）。
+   */
+  insertSnapshot(
+    cbsVersion: string,
+    cScore: number,
+    kScore: number,
+    sampleCount: number,
+    commitId?: string,
+  ): number {
+    this.assertOpen()
+    const result = this.db.prepare(
+      'INSERT INTO capability_snapshots (at, cbs_version, c_score, k_score, sample_count, commit_id) VALUES (?, ?, ?, ?, ?, ?)',
+    ).run(
+      new Date().toISOString(),
+      cbsVersion,
+      cScore,
+      kScore,
+      Math.max(0, Math.trunc(sampleCount)),
+      commitId ?? null,
+    )
+    return Number(result.lastInsertRowid)
+  }
+
+  /** 列出最近 N 条快照（按时间倒序）。 */
+  listSnapshots(limit = 200): readonly CapabilitySnapshotRow[] {
+    this.assertOpen()
+    return this.db.prepare(
+      'SELECT id, at, cbs_version, c_score, k_score, sample_count, commit_id FROM capability_snapshots ORDER BY id DESC LIMIT ?',
+    ).all(limit) as unknown as readonly CapabilitySnapshotRow[]
+  }
+
+  /** 取最新一条快照（用于回归门比较基线）。 */
+  latestSnapshot(cbsVersion?: string): CapabilitySnapshotRow | undefined {
+    this.assertOpen()
+    const row =
+      cbsVersion === undefined
+        ? this.db
+            .prepare(
+              'SELECT id, at, cbs_version, c_score, k_score, sample_count, commit_id FROM capability_snapshots ORDER BY id DESC LIMIT 1',
+            )
+            .get()
+        : this.db
+            .prepare(
+              'SELECT id, at, cbs_version, c_score, k_score, sample_count, commit_id FROM capability_snapshots WHERE cbs_version = ? ORDER BY id DESC LIMIT 1',
+            )
+            .get(cbsVersion)
+    return row as CapabilitySnapshotRow | undefined
+  }
+
+  /**
+   * 历史最高 C(t)——单调性守卫要跟历史最优比，而不是跟上一次比。
+   * 只比最新值会让一次抖动永久拉低基线（棘轮反向版）。
+   */
+  bestScore(cbsVersion?: string): number | undefined {
+    this.assertOpen()
+    const row =
+      cbsVersion === undefined
+        ? this.db.prepare('SELECT MAX(c_score) AS m FROM capability_snapshots').get()
+        : this.db.prepare('SELECT MAX(c_score) AS m FROM capability_snapshots WHERE cbs_version = ?').get(cbsVersion)
+    const m = (row as { m: number | null } | undefined)?.m
+    return m === null || m === undefined ? undefined : Number(m)
   }
 
   // ---- 生命周期 ----

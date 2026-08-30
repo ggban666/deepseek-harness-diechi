@@ -27,6 +27,7 @@ import type {
   MessageFeedbackNoteTooLarge,
   MessageFeedbackPutRequest,
   MessageFeedbackPutResult,
+  MessageFeedbackRating,
   MessageFeedbackRejected,
   MessageFeedbackSessionNotFound,
   MessageFeedbackSuccess,
@@ -258,8 +259,37 @@ export class MessageFeedbackService extends TypertRemoteService {
         request.sessionId,
         rowSnapshot(identityOf(durable.meta), nextItems),
       )
+      // 蝶翅：把用户的赞/踩接到三架构的体感样本池。
+      // 这是 C(t) 最真实的一路来源——闸只知道自己放行了，只有用户知道做得对不对。
+      this.reportSignal(request.messageId, request.rating, note.value)
       return success(snapshotItem(item))
     })
+  }
+
+  /**
+   * 蝶翅：把一条赞/踩转发给监督者的体感样本池（positive_samples）。
+   *
+   * 这是**软依赖**——通过 `ctx.get('supervision')` 动态取服务，不在 `inject` 里声明。
+   * 因此没有加载 diechi-supervisor 的部署不会因此失败，反馈功能照常工作，
+   * 只是不产生体感样本。反之若声明成硬依赖，所有不带监督者的 profile 都会起不来。
+   *
+   * 任何异常一律吞掉：埋点绝不能影响用户提交反馈这个主流程。
+   */
+  private reportSignal(messageId: string, rating: MessageFeedbackRating, note?: string): void {
+    try {
+      const supervision = this.ctx.get('supervision') as
+        | { recordSignal?: (scope: string, signal: string, detail?: { payload?: unknown }) => number }
+        | undefined
+      if (supervision === undefined || typeof supervision.recordSignal !== 'function') return
+      supervision.recordSignal(
+        'session:message-feedback',
+        // positive → accepted（用户明确认可）；negative → explicit-bad（用户明确说不对）
+        rating === 'positive' ? 'accepted' : 'explicit-bad',
+        { payload: { messageId, rating, ...(note === undefined ? {} : { note }) } },
+      )
+    } catch {
+      // 埋点失败静默——用户提交反馈的主流程不受影响
+    }
   }
 
   /**

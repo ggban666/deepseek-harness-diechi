@@ -9,15 +9,70 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import {
+  type CapabilitySnapshotRow,
   type NegativeSampleRow,
+  type PositiveSignal,
+  type PositiveSampleRow,
 } from './types.ts'
 import { SupervisorDb } from './db.ts'
+import { CapabilityGate } from './gate.ts'
+import type { GateConfig, GateInput, GateResult } from './gate.ts'
 import type {
   AgentRoleService,
   SupervisionContext,
+  SupervisionDecision,
   SupervisionInput,
   SupervisionResult,
 } from '@deepseek-ai/dsh-host-skill-store'
+
+/**
+ * 纯决策函数：只看规则表，不写库、不 emit 事件、不依赖 cordis。
+ *
+ * 抽出来的理由：CBS 基准集必须测**生产跑的那套判定**，
+ * 如果基准集自己复刻一份逻辑，测出来的分数就是假的（测的是影子代码）。
+ * 监督者服务与基准集共用这一个函数，保证「测的就是跑的」。
+ *
+ * A3 可判定性在这里落到代码层面：这是一个纯函数，给定同样的规则表与输入，
+ * 永远得到同样的结果——不调 LLM，没有随机性。
+ *
+ * @param db 任意提供规则查询的库（生产库或沙盒副本）
+ * @param input 决策输入
+ * @param currentRole 当前临时角色；undefined 表示未启用角色机制
+ */
+export function decidePure(
+  db: Pick<SupervisorDb, 'getFrozenRule' | 'getAuthorization'>,
+  input: SupervisionInput,
+  currentRole?: string,
+): { decision: SupervisionDecision; reason?: string } {
+  // 1) frozen_rules 优先——临时身份也不豁免
+  if (db.getFrozenRule(input.scope) !== undefined) {
+    return { decision: 'deny', reason: 'rule-frozen' }
+  }
+
+  // 2) 临时身份"批自己"检测：source 形如 '...:role:designer' 且当前正以该角色运行
+  if (currentRole !== undefined && input.source !== undefined) {
+    const match = /(?:^|:)role:(\w+)$/.exec(input.source)
+    if (match !== null) {
+      const sourceRole = match[1]
+      if (
+        sourceRole !== undefined &&
+        sourceRole !== 'subject' &&
+        sourceRole === currentRole &&
+        input.scope === 'evolution:propose'
+      ) {
+        return { decision: 'deny', reason: 'self-proposal-blocked' }
+      }
+    }
+  }
+
+  // 3) 查 authorizations
+  if (db.getAuthorization(input.scope) !== undefined) {
+    return { decision: 'allow' }
+  }
+
+  // 4) 默认 deny
+  return { decision: 'deny', reason: 'no-authorization' }
+}
 
 /** 监督者类型（供其他 host 包通过 SupervisorLike 协议注入）。 */
 export interface SupervisorLike {
@@ -60,12 +115,18 @@ export class SupervisorService implements SupervisionContext {
   /** 决策观察者集合（diechi-evolve 订阅实时累计）。 */
   private readonly decisionObservers = new Set<(e: SupervisionDecisionEvent) => void>()
 
+  /** 双门（A1 单调性 + A2 有界性的执行者）。deterministic，不调 LLM。 */
+  private readonly gate: CapabilityGate
+
   constructor(
     // @ts-expect-error P3.6 早期未使用：未来 supervision/decision 事件走 cordis event bus 时使用。
     private readonly ctx: Context,
     private readonly db: SupervisorDb,
     private readonly agentRole?: AgentRoleService,
-  ) {}
+    gateConfig: Partial<GateConfig> = {},
+  ) {
+    this.gate = new CapabilityGate(db, gateConfig)
+  }
 
   // ---- 注入管理：cordis 启动时由 host 把已 open 的 PersonBrain 注入 ----
 
@@ -128,41 +189,22 @@ export class SupervisorService implements SupervisionContext {
    * 拆出来便于测试 + 让 decide() 的"emit 事件"逻辑可独立观察。
    */
   private decideCore(input: SupervisionInput): SupervisionResult {
-    // 1) frozen_rules 优先——临时身份也不豁免
-    const frozen = this.db.getFrozenRule(input.scope)
-    if (frozen !== undefined) {
-      const sampleId = this.writeSample(input, 'deny', 'rule-frozen')
-      return { decision: 'deny', reason: 'rule-frozen', sampleId }
-    }
+    // 判定本身委托给 decidePure——与 CBS 基准集共用同一份逻辑，
+    // 「测的就是跑的」。记账（写样本）留在这里，基准集跑的时候不该记账。
+    const verdict = decidePure(this.db, input, this.agentRole?.current())
 
-    // 2) 临时身份"批自己"检测——source 字段含 'role:designer' 且本 service 持有 AgentRoleService
-    //    且 AgentRoleService.current() === 'designer' → 不能批自己写的提议
-    //    （PersonBrain 不直接拿 ctx——这里靠 source 字段携带角色信息）
-    if (this.agentRole !== undefined && input.source !== undefined) {
-      const match = /(?:^|:)role:(\w+)$/.exec(input.source)
-      if (match !== null) {
-        const sourceRole = match[1]
-        if (
-          sourceRole !== undefined &&
-          sourceRole !== 'subject' &&
-          sourceRole === this.agentRole.current() &&
-          input.scope === 'evolution:propose'
-        ) {
-          const sampleId = this.writeSample(input, 'deny', 'self-proposal-blocked')
-          return { decision: 'deny', reason: 'self-proposal-blocked', sampleId }
-        }
-      }
-    }
-
-    // 3) 查 authorizations
-    const auth = this.db.getAuthorization(input.scope)
-    if (auth !== undefined) {
+    if (verdict.decision === 'allow') {
+      // S1：成功路径不再静默。此前 allow 直接 return，系统只记录"哪里错了"、
+      // 从不记录"什么是对的"——只从失败学习的系统，最优解是"什么都不做"。
+      // 这里记一条乐观体感样本（no-rework），用户若点"这不对/我返工了"，
+      // 前端再补记 explicit-bad / user-undo，C(t) 自然被拉低。
+      this.recordAllow(input)
       return { decision: 'allow' }
     }
 
-    // 4) 默认 deny + 写负样本
-    const sampleId = this.writeSample(input, 'deny', 'no-authorization')
-    return { decision: 'deny', reason: 'no-authorization', sampleId }
+    const reason = verdict.reason ?? 'no-authorization'
+    const sampleId = this.writeSample(input, verdict.decision as 'deny' | 'flag-review', reason)
+    return { decision: verdict.decision, reason, sampleId }
   }
 
   /** 注册决策观察者（diechi-evolve 用）。返回 disposer。 */
@@ -177,6 +219,131 @@ export class SupervisorService implements SupervisionContext {
 
   recordFlag(input: SupervisionInput, reason: string): number {
     return this.writeSample(input, 'flag-review', reason)
+  }
+
+  // ---- S0/S1 度量与体感采集 ----
+  // 死结 2 的解药：此前 allow 分支直接 return，系统从不记录"什么是对的"。
+  // 只从失败中学习的系统，最优解是"什么都不做"——因为什么都不做就不会失败。
+
+  /**
+   * 体感采集节流：allow 是高频路径，同一 scope 在节流窗内只记一条。
+   *
+   * 这两个字段刻意不是 private：度量网关要把"当前节流窗口是多少"显示给前端。
+   * 一个看不见自己采集策略的可观测系统，等于让人对着黑箱调参。
+   */
+  private readonly telemetryThrottle = new Map<string, number>()
+  telemetryThrottleMs = 1000
+  telemetryEnabled = true
+
+  /** 配置体感采集（host 从 settings 读后注入）。 */
+  configureTelemetry(opts: { enabled?: boolean; throttleMs?: number }): void {
+    if (opts.enabled !== undefined) this.telemetryEnabled = opts.enabled
+    if (opts.throttleMs !== undefined && opts.throttleMs >= 0) this.telemetryThrottleMs = opts.throttleMs
+  }
+
+  /** allow 时记一条乐观正样本。异常一律吞掉——埋点绝不能影响主决策（A3）。 */
+  private recordAllow(input: SupervisionInput): void {
+    if (!this.telemetryEnabled) return
+    const now = Date.now()
+    const last = this.telemetryThrottle.get(input.scope) ?? 0
+    if (now - last < this.telemetryThrottleMs) return
+    this.telemetryThrottle.set(input.scope, now)
+    try {
+      this.db.insertPositiveSample(
+        input.scope,
+        JSON.stringify({ payload: input.payload ?? {}, source: input.source ?? 'unknown' }),
+        'no-rework',
+      )
+    } catch {
+      // 埋点失败静默：监督者的主职责是判定，不是采集
+    }
+  }
+
+  /**
+   * 上报一条用户体感信号（P3 返工按钮 / 采纳按钮 / no-rework 检测）。
+   * 这是 C(t) 的**主体**来源——闸只知道自己放行了，只有用户知道做得对不对。
+   */
+  recordSignal(
+    scope: string,
+    signal: PositiveSignal,
+    detail?: { payload?: unknown; latencyMs?: number; costUnits?: number },
+  ): number {
+    return this.db.insertPositiveSample(
+      scope,
+      JSON.stringify(detail?.payload ?? {}),
+      signal,
+      detail?.latencyMs,
+      detail?.costUnits,
+    )
+  }
+
+  /** 列出最近体感样本。 */
+  listPositiveSamples(limit = 100): readonly PositiveSampleRow[] {
+    return this.db.listPositiveSamples(limit)
+  }
+
+  /**
+   * 当前一次通过率 C(t)——A1 单调性的度量对象。
+   * C = 正信号 / 总信号。用户每补记一次返工，分子分母同时 +1，C 自然被拉低。
+   */
+  currentScore(sinceMs?: number): { c: number; positive: number; total: number } {
+    const stats = this.db.countSignalsByKind(sinceMs)
+    const positive = stats.accepted + stats['no-rework']
+    const negative = stats['user-undo'] + stats['explicit-bad']
+    const total = positive + negative
+    return { c: total === 0 ? 0 : positive / total, positive, total }
+  }
+
+  /** 写一次基准回归快照（S0）。cbsVersion 如 'CBS-v1'——基准集只增不改，换版发新号。 */
+  recordSnapshot(
+    cbsVersion: string,
+    cScore: number,
+    kScore: number,
+    sampleCount: number,
+    commitId?: string,
+  ): number {
+    return this.db.insertSnapshot(cbsVersion, cScore, kScore, sampleCount, commitId)
+  }
+
+  /** 最近 N 次回归快照。 */
+  listSnapshots(limit = 200): readonly CapabilitySnapshotRow[] {
+    return this.db.listSnapshots(limit)
+  }
+
+  /** 最新一次快照（回归门的比较基线）。 */
+  latestSnapshot(cbsVersion?: string): CapabilitySnapshotRow | undefined {
+    return this.db.latestSnapshot(cbsVersion)
+  }
+
+  /** 历史最高 C——单调守卫跟历史最优比，不跟上一枪比（否则一次抖动永久拉低基线）。 */
+  bestScore(cbsVersion?: string): number | undefined {
+    return this.db.bestScore(cbsVersion)
+  }
+
+  /** 清理过期体感样本。 */
+  cleanupPositiveSamples(keepCount = 20000): number {
+    return this.db.cleanupPositiveSamples(keepCount)
+  }
+
+  // ---- S3 双门 ----
+
+  /**
+   * 对一个候选版本跑双门（deterministic，不调 LLM）。
+   * 沙盒跑完 CBS 得到 cScore / kScore 后调用；不过门的提议应自动 denied，
+   * 并把 `result.reason` 写进 negative_samples。
+   */
+  evaluateProposal(input: GateInput): GateResult {
+    return this.gate.evaluate(input)
+  }
+
+  /** 当前双门配置（回归容差 / 成本软带 / 硬顶）。 */
+  gateConfig(): GateConfig {
+    return this.gate.config()
+  }
+
+  /** 当前滑动成本基线 K̄（EMA）。 */
+  costBaseline(cbsVersion?: string): number {
+    return this.gate.kBar(cbsVersion)
   }
 
   // ---- 监督者自身不能改规则——这些是 human-only RPC，由 ctx 暴露 ----

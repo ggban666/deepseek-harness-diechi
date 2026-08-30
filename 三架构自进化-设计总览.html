@@ -1,0 +1,1001 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>蝶翅三架构 · 自进化完整设计 v2</title>
+<style>
+  :root{
+    --bg:#0a0e14; --bg2:#0e141c; --panel:#131b25; --panel2:#18222e;
+    --line:#23303f; --line2:#2e3f52;
+    --tx:#dbe6f2; --tx2:#8fa3b8; --tx3:#5d7186;
+    --cyan:#38bdf8; --green:#22c55e; --purple:#a78bfa;
+    --amber:#f59e0b; --red:#ef4444; --pink:#f472b6;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    background:var(--bg); color:var(--tx);
+    font-family:"Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+    line-height:1.7; font-size:15px;
+  }
+  .wrap{max-width:1180px;margin:0 auto;padding:0 24px 80px}
+
+  /* ---------- hero ---------- */
+  header{
+    padding:64px 0 40px; text-align:center;
+    background:radial-gradient(ellipse 900px 340px at 50% -80px, rgba(56,189,248,.16), transparent 70%);
+    border-bottom:1px solid var(--line);
+  }
+  .eyebrow{
+    display:inline-block;font-size:12px;letter-spacing:3px;color:var(--cyan);
+    border:1px solid rgba(56,189,248,.35);border-radius:99px;padding:4px 16px;margin-bottom:22px;
+  }
+  h1{font-size:40px;font-weight:700;letter-spacing:-.5px;margin-bottom:18px}
+  h1 em{font-style:normal;background:linear-gradient(90deg,var(--cyan),var(--purple));-webkit-background-clip:text;background-clip:text;color:transparent}
+  .thesis{font-size:19px;color:var(--tx2);max-width:760px;margin:0 auto 10px}
+  .thesis b{color:var(--tx)}
+  .formula{
+    display:inline-block;margin-top:22px;padding:12px 26px;border-radius:12px;
+    background:var(--panel);border:1px solid var(--line2);
+    font-family:"Cascadia Code",Consolas,monospace;font-size:18px;color:var(--green);
+  }
+  .formula small{display:block;font-family:inherit;font-size:12px;color:var(--tx3);margin-top:4px}
+
+  /* ---------- nav ---------- */
+  nav{
+    position:sticky;top:0;z-index:50;background:rgba(10,14,20,.92);
+    backdrop-filter:blur(12px);border-bottom:1px solid var(--line);
+  }
+  nav .wrap{display:flex;gap:4px;padding:0 24px;overflow-x:auto}
+  nav a{
+    color:var(--tx2);text-decoration:none;font-size:13px;padding:13px 14px;
+    white-space:nowrap;border-bottom:2px solid transparent;transition:.15s;
+  }
+  nav a:hover{color:var(--tx)}
+  nav a.on{color:var(--cyan);border-bottom-color:var(--cyan)}
+
+  /* ---------- section ---------- */
+  section{padding:56px 0 8px;scroll-margin-top:60px}
+  h2{
+    font-size:26px;margin-bottom:8px;display:flex;align-items:center;gap:12px;
+  }
+  h2 .n{
+    font-size:13px;color:var(--bg);background:var(--cyan);
+    width:26px;height:26px;border-radius:7px;display:grid;place-items:center;font-weight:700;flex:none;
+  }
+  .sub{color:var(--tx3);font-size:14px;margin-bottom:26px;padding-left:38px}
+
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px}
+  .grid{display:grid;gap:16px}
+  .g3{grid-template-columns:repeat(3,1fr)}
+  .g2{grid-template-columns:repeat(2,1fr)}
+  @media(max-width:900px){.g3,.g2{grid-template-columns:1fr}}
+
+  .axiom{border-left:3px solid var(--cyan)}
+  .axiom:nth-child(2){border-left-color:var(--amber)}
+  .axiom:nth-child(3){border-left-color:var(--purple)}
+  .axiom .k{font-size:12px;letter-spacing:2px;color:var(--tx3);margin-bottom:6px}
+  .axiom h3{font-size:17px;margin-bottom:8px}
+  .axiom p{color:var(--tx2);font-size:14px}
+
+  /* ---------- chart ---------- */
+  .chartbox{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px}
+  .legend{display:flex;gap:18px;flex-wrap:wrap;font-size:12px;color:var(--tx2);margin-bottom:12px}
+  .legend i{display:inline-block;width:14px;height:3px;border-radius:2px;margin-right:6px;vertical-align:middle}
+  canvas{display:block;width:100%;border-radius:8px}
+  #cv{height:440px} #cv2{height:300px}
+  .ctrl{display:flex;gap:26px;flex-wrap:wrap;align-items:center;margin-top:16px;padding-top:16px;border-top:1px solid var(--line)}
+  .ctrl label{font-size:13px;color:var(--tx2);display:flex;align-items:center;gap:10px}
+  input[type=range]{-webkit-appearance:none;width:170px;height:4px;border-radius:2px;background:var(--line2);outline:none}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;height:15px;border-radius:50%;background:var(--cyan);cursor:pointer;box-shadow:0 0 0 4px rgba(56,189,248,.2)}
+  .btn{
+    background:var(--panel2);border:1px solid var(--line2);color:var(--tx);
+    padding:7px 15px;border-radius:8px;font-size:13px;cursor:pointer;transition:.15s;font-family:inherit;
+  }
+  .btn:hover{border-color:var(--cyan);color:var(--cyan)}
+  .btn.pri{background:rgba(56,189,248,.14);border-color:rgba(56,189,248,.5);color:var(--cyan)}
+  .stat{display:flex;gap:20px;flex-wrap:wrap;margin-left:auto}
+  .stat div{text-align:right}
+  .stat span{display:block;font-size:11px;color:var(--tx3);letter-spacing:1px}
+  .stat b{font-size:19px;font-variant-numeric:tabular-nums}
+  .up{color:var(--green)} .warn{color:var(--amber)} .bad{color:var(--red)} .cy{color:var(--cyan)}
+
+  .split{display:grid;grid-template-columns:1fr 300px;gap:16px}
+  @media(max-width:900px){.split{grid-template-columns:1fr}}
+  .feed{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;height:100%}
+  .feed h4{font-size:12px;letter-spacing:2px;color:var(--tx3);margin-bottom:12px}
+  .feed ul{list-style:none;font-size:12px;font-family:"Cascadia Code",Consolas,monospace;max-height:300px;overflow:auto}
+  .feed li{padding:5px 0;border-bottom:1px solid rgba(35,48,63,.6);color:var(--tx2);display:flex;gap:8px}
+  .feed li .t{color:var(--tx3);flex:none}
+  .tag{display:inline-block;padding:1px 6px;border-radius:4px;font-size:10px;font-family:inherit}
+  .t-ok{background:rgba(34,197,94,.15);color:var(--green)}
+  .t-deny{background:rgba(239,68,68,.15);color:var(--red)}
+  .t-solid{background:rgba(167,139,250,.16);color:var(--purple)}
+  .t-thr{background:rgba(245,158,11,.16);color:var(--amber)}
+
+  /* ---------- loop svg ---------- */
+  .loopwrap{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;text-align:center}
+  .loopwrap svg{width:100%;max-width:900px;height:auto}
+  text{font-family:"Segoe UI","PingFang SC",sans-serif}
+
+  /* ---------- table ---------- */
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th,td{padding:11px 13px;text-align:left;border-bottom:1px solid var(--line)}
+  th{font-size:12px;letter-spacing:1px;color:var(--tx3);font-weight:600;background:var(--panel2)}
+  td{color:var(--tx2)}
+  td:first-child{color:var(--tx)}
+  tr:last-child td{border-bottom:none}
+  .mono{font-family:"Cascadia Code",Consolas,monospace;font-size:13px}
+
+  /* ---------- mockup ---------- */
+  .mock{background:var(--bg2);border:1px solid var(--line2);border-radius:14px;overflow:hidden;max-width:660px}
+  .mockbar{padding:9px 14px;background:var(--panel);border-bottom:1px solid var(--line);font-size:12px;color:var(--tx3);display:flex;gap:8px;align-items:center}
+  .dot{width:9px;height:9px;border-radius:50%}
+  .statusbar{
+    display:flex;gap:14px;flex-wrap:wrap;align-items:center;
+    padding:9px 14px;background:rgba(56,189,248,.07);border-bottom:1px solid var(--line);
+    font-size:11.5px;color:var(--tx2);font-family:"Cascadia Code",Consolas,monospace;
+  }
+  .pulse{width:7px;height:7px;border-radius:50%;background:var(--green);animation:pulse 1.6s infinite}
+  @keyframes pulse{0%,100%{opacity:1;box-shadow:0 0 0 0 rgba(34,197,94,.5)}50%{opacity:.5;box-shadow:0 0 0 5px rgba(34,197,94,0)}}
+  .body{padding:16px;display:flex;flex-direction:column;gap:12px}
+  .msg{padding:11px 14px;border-radius:11px;font-size:13.5px;max-width:88%}
+  .msg.u{align-self:flex-end;background:rgba(56,189,248,.13);border:1px solid rgba(56,189,248,.25)}
+  .msg.a{align-self:flex-start;background:var(--panel);border:1px solid var(--line)}
+  .whisper{font-size:11.5px;color:var(--purple);display:flex;gap:6px;align-items:flex-start;margin-top:-4px;align-self:flex-start;max-width:88%}
+  .proposal{
+    align-self:stretch;background:var(--panel2);border:1px solid rgba(167,139,250,.35);
+    border-radius:11px;padding:13px;font-size:13px;
+  }
+  .proposal .hd{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+  .proposal .hd b{color:var(--purple);font-size:13px}
+  .proposal .hd .kind{font-size:10px;padding:2px 7px;border-radius:4px;background:rgba(167,139,250,.16);color:var(--purple)}
+  .proposal dl{display:grid;grid-template-columns:64px 1fr;gap:4px 10px;font-size:12px;color:var(--tx2);margin-bottom:11px}
+  .proposal dt{color:var(--tx3)}
+  .proposal .acts{display:flex;gap:8px}
+  .rework{display:flex;gap:8px;align-self:flex-start;margin-top:-6px}
+  .rework button{
+    background:transparent;border:1px solid var(--line2);color:var(--tx3);
+    font-size:11.5px;padding:4px 11px;border-radius:7px;cursor:pointer;font-family:inherit;transition:.15s;
+  }
+  .rework button:hover{border-color:var(--red);color:var(--red)}
+
+  /* ---------- roadmap ---------- */
+  .rm{display:grid;gap:0}
+  .step{display:grid;grid-template-columns:82px 1fr;gap:16px;position:relative;padding-bottom:22px}
+  .step:last-child{padding-bottom:0}
+  .step::before{content:"";position:absolute;left:27px;top:30px;bottom:0;width:1px;background:var(--line)}
+  .step:last-child::before{display:none}
+  .step .id{
+    width:56px;height:56px;border-radius:12px;display:grid;place-items:center;z-index:1;
+    background:var(--panel);border:1px solid var(--line2);font-weight:700;font-size:15px;color:var(--cyan);
+  }
+  .step .ct{padding-top:6px}
+  .step h4{font-size:16px;margin-bottom:5px}
+  .step p{font-size:13.5px;color:var(--tx2)}
+  .step .dep{font-size:11.5px;color:var(--tx3);margin-top:5px;font-family:"Cascadia Code",Consolas,monospace}
+
+  .note{
+    background:rgba(245,158,11,.07);border:1px solid rgba(245,158,11,.28);
+    border-radius:12px;padding:15px 18px;font-size:13.5px;color:var(--tx2);
+  }
+  .note b{color:var(--amber)}
+  footer{padding:44px 0 0;text-align:center;color:var(--tx3);font-size:12.5px;border-top:1px solid var(--line);margin-top:52px}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <div class="eyebrow">DIECHI · 三架构自进化基座</div>
+    <h1>把智能从<em>模型里</em>搬出来，放进<em>架构里</em></h1>
+    <p class="thesis">
+      一个弱智 LLM，只要放进<b>被升级者 + 升级设计者 + 监督者</b>的结构里并给予足够算力，
+      系统的表现可以趋近任意强——<br>因为它不再依赖<b>单次采样猜对</b>，而依赖
+      <b>多猜几次 + 判定对错 + 把猜对的永久固化</b>。
+    </p>
+    <div class="formula">
+      C(N) = 1 − (1 − p)<sup>N</sup>
+      <small>C = 一次通过率 · p = 模型单次采样正确率（可以很弱）· N = 有效算力</small>
+    </div>
+  </div>
+</header>
+
+<nav>
+  <div class="wrap">
+    <a href="#axiom" class="on">设计公理</a>
+    <a href="#curve">双曲线实时模拟</a>
+    <a href="#loop">三架构闭环</a>
+    <a href="#amp">弱模型放大律</a>
+    <a href="#diag">现状诊断</a>
+    <a href="#sense">可感知层</a>
+    <a href="#road">路线图</a>
+  </div>
+</nav>
+
+<div class="wrap">
+
+<!-- ============ 1 公理 ============ -->
+<section id="axiom">
+  <h2><span class="n">1</span>三条设计公理</h2>
+  <p class="sub">后面所有工程决策都由这三条推导。任何与之冲突的实现都是 bug。</p>
+  <div class="grid g3">
+    <div class="card axiom">
+      <div class="k">AXIOM A1</div>
+      <h3>单调性 · 能力只升不降</h3>
+      <p>任何改动先过回归门：新版本在<b>冻结基准集</b>上不劣于旧版本才允许合并。禁止"删除式改进"，固化库只增不减，删除 = 标记 superseded，永不物理丢弃。</p>
+    </div>
+    <div class="card axiom">
+      <div class="k">AXIOM A2</div>
+      <h3>有界性 · 成本 ±20%</h3>
+      <p>智能的增长不许靠无限烧钱换。成本必须落在滑动基线 <span class="mono">K̄</span> 的 <b>±20% 软带</b>内，且有 <b>绝对硬顶 K<sub>max</sub></b>（防棘轮式缓慢爬升）。超带 → 降档，超顶 → 拒绝服务。</p>
+    </div>
+    <div class="card axiom">
+      <div class="k">AXIOM A3</div>
+      <h3>可判定性 · 判定确定性</h3>
+      <p>判定比生成容易，且判定必须是确定性的。监督者 <span class="mono">decide()</span> 是查表、<b>不调 LLM</b>——这条已在代码里做到了，是整个体系的地基，不可动摇。</p>
+    </div>
+  </div>
+
+  <div style="height:22px"></div>
+  <div class="grid g2">
+    <div class="card">
+      <h3 style="font-size:16px;margin-bottom:10px;color:var(--green)">固化：让曲线真正向上的物理机制</h3>
+      <p style="color:var(--tx2);font-size:14px">
+        纯靠算力放大 N 有个致命问题：成本随 N 线性上升，而且<b>每次都要重新蒙</b>。
+        解药是固化——每次蒙对的结果转成规则 / 案例 / 技能，下次直接命中，不必再采样。
+      </p>
+      <p class="mono" style="margin-top:12px;color:var(--tx3);font-size:13px">
+        C(t) = C₀ + Σ ΔCᵢ　（ΔCᵢ ≥ 0，永不撤销）<br>
+        K(t) = 采样成本(N) + 检索成本(|规则库|)
+      </p>
+      <p style="margin-top:12px;color:var(--cyan);font-size:14px">
+        <b>采样的收益是一次性的，固化的收益是永久性的。</b>
+        固化率越高，所需 N 越小 → 越容易守住成本带。<b>进化和省钱是同一件事。</b>
+      </p>
+    </div>
+    <div class="card">
+      <h3 style="font-size:16px;margin-bottom:10px;color:var(--amber)">诚实的边界（不许自我欺骗）</h3>
+      <table style="font-size:13px">
+        <tr><td>可靠性闭环（自愈/升级/降级/基座保护）</td><td class="up">已端到端实证</td></tr>
+        <tr><td>进化闭环</td><td class="bad">从未运转</td></tr>
+        <tr><td>验证器可靠 + 任务可判定 ⟹ C → 1</td><td>可证伪推论</td></tr>
+        <tr><td>三架构是 AGI 的充分条件</td><td class="warn">主张，非定理</td></tr>
+      </table>
+      <p style="margin-top:12px;color:var(--tx2);font-size:13.5px">
+        <b style="color:var(--red)">A3 破产的三种情况</b>必须显式检测并报警：<br>
+        ① 任务没有客观对错（审美/价值观）→ 验证器不可靠<br>
+        ② 任务分布漂移 → 历史固化反而成为负债<br>
+        ③ 提议空间不含解 → 算力再多也不收敛，需 human 注入新原语
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 2 双曲线 ============ -->
+<section id="curve">
+  <h2><span class="n">2</span>双曲线实时模拟</h2>
+  <p class="sub">
+    上半：能力曲线（细线 = 实时通过率，粗线 = <b style="color:var(--green)">固化能力基线，阶梯只升不降</b>）。
+    下半：成本曲线，含 <b style="color:var(--amber)">±20% 软带</b>与 <b style="color:var(--red)">K<sub>max</sub> 硬顶</b>。
+    拉动算力滑块，看能力如何变陡、成本如何被压回带内。
+  </p>
+
+  <div class="split">
+    <div class="chartbox">
+      <div class="legend">
+        <span><i style="background:#38bdf8"></i>实时通过率 C(t)</span>
+        <span><i style="background:#22c55e;height:4px"></i>固化能力基线（单调↑）</span>
+        <span><i style="background:#a78bfa"></i>固化事件</span>
+        <span><i style="background:#f59e0b"></i>成本 K(t)</span>
+        <span><i style="background:rgba(245,158,11,.3);height:8px"></i>±20% 成本带</span>
+        <span><i style="background:#ef4444"></i>降档 / 硬顶</span>
+      </div>
+      <canvas id="cv" height="440"></canvas>
+      <div class="ctrl">
+        <label>算力投入 N
+          <input type="range" id="sN" min="1" max="40" value="8">
+          <b id="vN" class="cy" style="min-width:24px">8</b>
+        </label>
+        <label>模型强度 p
+          <input type="range" id="sP" min="2" max="45" value="15">
+          <b id="vP" class="up">0.15</b>
+        </label>
+        <button class="btn pri" id="btnRun">⏸ 暂停</button>
+        <button class="btn" id="btnSolid">⚡ 人工固化一次</button>
+        <button class="btn" id="btnReset">↺ 重置</button>
+        <div class="stat">
+          <div><span>能力 C</span><b id="oC" class="up">—</b></div>
+          <div><span>成本 K</span><b id="oK" class="warn">—</b></div>
+          <div><span>固化条目</span><b id="oS" style="color:var(--purple)">0</b></div>
+        </div>
+      </div>
+    </div>
+    <div class="feed">
+      <h4>监督者 · 决策事件流</h4>
+      <ul id="feed"></ul>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 3 闭环 ============ -->
+<section id="loop">
+  <h2><span class="n">3</span>三架构闭环与双门</h2>
+  <p class="sub">光点沿环路流动：正/负样本 → 监督者判定 → 升级设计者出提议 → 沙盒评估 → 双门 → 合并回被升级者。双门处有通过 / 拦截的分叉。</p>
+  <div class="loopwrap">
+    <svg viewBox="0 0 900 430" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="gS" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0" stop-color="#38bdf8" stop-opacity=".1"/>
+          <stop offset="1" stop-color="#38bdf8" stop-opacity=".28"/>
+        </linearGradient>
+        <linearGradient id="gE" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0" stop-color="#a78bfa" stop-opacity=".1"/>
+          <stop offset="1" stop-color="#a78bfa" stop-opacity=".28"/>
+        </linearGradient>
+        <marker id="ar" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+          <path d="M0,0 L9,4.5 L0,9 z" fill="#3d5169"/>
+        </marker>
+      </defs>
+
+      <!-- 节点 -->
+      <g>
+        <rect x="40" y="150" width="190" height="96" rx="14" fill="url(#gS)" stroke="#38bdf8" stroke-width="1.2"/>
+        <text x="135" y="182" fill="#38bdf8" font-size="15" font-weight="700" text-anchor="middle">① 被升级者</text>
+        <text x="135" y="203" fill="#8fa3b8" font-size="11.5" text-anchor="middle">DSH 主进程 · 3090</text>
+        <text x="135" y="223" fill="#5d7186" font-size="10.5" text-anchor="middle">跑业务 / 产生样本</text>
+      </g>
+      <g>
+        <rect x="355" y="36" width="190" height="96" rx="14" fill="#18222e" stroke="#22c55e" stroke-width="1.2"/>
+        <text x="450" y="68" fill="#22c55e" font-size="15" font-weight="700" text-anchor="middle">② 监督者</text>
+        <text x="450" y="89" fill="#8fa3b8" font-size="11.5" text-anchor="middle">diechi-supervisor</text>
+        <text x="450" y="109" fill="#5d7186" font-size="10.5" text-anchor="middle">decide() 查表 · 不调 LLM</text>
+      </g>
+      <g>
+        <rect x="670" y="150" width="190" height="96" rx="14" fill="url(#gE)" stroke="#a78bfa" stroke-width="1.2"/>
+        <text x="765" y="182" fill="#a78bfa" font-size="15" font-weight="700" text-anchor="middle">③ 升级设计者</text>
+        <text x="765" y="203" fill="#8fa3b8" font-size="11.5" text-anchor="middle">diechi-evolve</text>
+        <text x="765" y="223" fill="#5d7186" font-size="10.5" text-anchor="middle">读样本 → 出提议</text>
+      </g>
+      <g>
+        <rect x="355" y="264" width="190" height="96" rx="14" fill="#18222e" stroke="#f59e0b" stroke-width="1.2"/>
+        <text x="450" y="296" fill="#f59e0b" font-size="15" font-weight="700" text-anchor="middle">④ 沙盒双门</text>
+        <text x="450" y="317" fill="#8fa3b8" font-size="11.5" text-anchor="middle">子进程跑 CBS 全量</text>
+        <text x="450" y="337" fill="#5d7186" font-size="10.5" text-anchor="middle">门1 回归 · 门2 成本</text>
+      </g>
+
+      <!-- 连线 -->
+      <path id="p1" d="M185,196 C260,150 300,110 355,84" fill="none" stroke="#3d5169" stroke-width="1.4" marker-end="url(#ar)"/>
+      <path id="p2" d="M500,84 C570,110 610,150 670,182" fill="none" stroke="#3d5169" stroke-width="1.4" marker-end="url(#ar)"/>
+      <path id="p3" d="M765,246 C700,270 640,290 545,300" fill="none" stroke="#3d5169" stroke-width="1.4" marker-end="url(#ar)"/>
+      <path id="p4" d="M355,312 C280,290 240,250 185,220" fill="none" stroke="#3d5169" stroke-width="1.4" marker-end="url(#ar)"/>
+      <!-- 拦截分叉 -->
+      <path id="p5" d="M450,264 L450,236" fill="none" stroke="#3d5169" stroke-width="1.4" marker-end="url(#ar)" stroke-dasharray="4 3"/>
+
+      <text x="255" y="126" fill="#5d7186" font-size="10.5">正/负样本</text>
+      <text x="560" y="118" fill="#5d7186" font-size="10.5">deny / flag 事件</text>
+      <text x="655" y="288" fill="#5d7186" font-size="10.5">提议</text>
+      <text x="240" y="292" fill="#5d7186" font-size="10.5">合并 · 只增不减</text>
+
+      <!-- 光点 -->
+      <circle r="5" fill="#22c55e"><animateMotion dur="3.2s" repeatCount="indefinite"><mpath href="#p1"/></animateMotion></circle>
+      <circle r="5" fill="#ef4444"><animateMotion dur="3.2s" repeatCount="indefinite" begin="1.6s"><mpath href="#p1"/></animateMotion></circle>
+      <circle r="5" fill="#f59e0b"><animateMotion dur="3.2s" repeatCount="indefinite" begin="0.8s"><mpath href="#p2"/></animateMotion></circle>
+      <circle r="5" fill="#a78bfa"><animateMotion dur="3.2s" repeatCount="indefinite" begin="1.4s"><mpath href="#p3"/></animateMotion></circle>
+      <circle r="5" fill="#38bdf8"><animateMotion dur="3.2s" repeatCount="indefinite" begin="2.1s"><mpath href="#p4"/></animateMotion></circle>
+
+      <!-- 底部说明 -->
+      <g transform="translate(40,392)">
+        <rect width="820" height="1" fill="#23303f"/>
+        <text x="0" y="24" fill="#5d7186" font-size="11.5">
+          门1 回归门：C′ ≥ C − ε（ε = 基准集置信下界）　·　门2 成本门：K′ ≤ 1.2·K̄ 且 K′ ≤ K_max　·　任一不过 → 提议自动 denied
+        </text>
+      </g>
+    </svg>
+  </div>
+</section>
+
+<!-- ============ 4 放大律 ============ -->
+<section id="amp">
+  <h2><span class="n">4</span>弱模型放大律（交互）</h2>
+  <p class="sub">
+    固定一个<b>很弱</b>的底层模型（默认 p = 0.15，即单次只有 15% 概率做对），
+    只增加算力 N。看曲线如何爬向 1。这就是"无限算力趋近无限智能"的可证伪形式。
+  </p>
+  <div class="split">
+    <div class="chartbox">
+      <canvas id="cv2" height="300"></canvas>
+      <div class="ctrl">
+        <label>单次正确率 p
+          <input type="range" id="aP" min="2" max="60" value="15">
+          <b id="aPv" class="up">0.15</b>
+        </label>
+        <label>算力 N
+          <input type="range" id="aN" min="1" max="80" value="20">
+          <b id="aNv" class="cy">20</b>
+        </label>
+        <div class="stat">
+          <div><span>裸模型 C(1)</span><b id="aC1" class="bad">—</b></div>
+          <div><span>放大后 C(N)</span><b id="aCN" class="up">—</b></div>
+          <div><span>放大倍数</span><b id="aM" style="color:var(--purple)">—</b></div>
+        </div>
+      </div>
+    </div>
+    <div class="card" style="align-self:start">
+      <h4 style="font-size:12px;letter-spacing:2px;color:var(--tx3);margin-bottom:12px">这条公式的三个前提</h4>
+      <p style="font-size:13.5px;color:var(--tx2);margin-bottom:14px">缺任何一个，放大律都不成立：</p>
+      <table style="font-size:13px">
+        <tr><td>① 采样独立</td><td class="mono" style="color:var(--tx3)">否则 (1−p)^N 不成立</td></tr>
+        <tr><td>② 验证器无误判</td><td class="mono" style="color:var(--tx3)">A3，监督者查表保证</td></tr>
+        <tr><td>③ 任务可判定</td><td class="mono" style="color:var(--tx3)">有客观对错</td></tr>
+      </table>
+      <div class="note" style="margin-top:16px">
+        <b>最关键的可证伪实验（S5）</b><br>
+        L3 完成后立刻做：把蝶翅接一个 <b>1B 小模型</b>，看它能否靠算力爬回 7B 的水平。
+        若爬不回，核心理念被证伪——这个结论同样有价值。
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 5 诊断 ============ -->
+<section id="diag">
+  <h2><span class="n">5</span>现状诊断：四条架构级死结</h2>
+  <p class="sub">全部来自 2026-08-30 对运行库与源码的实读，不是推测。</p>
+
+  <div class="grid g2" style="margin-bottom:18px">
+    <div class="card">
+      <h4 style="font-size:12px;letter-spacing:2px;color:var(--tx3);margin-bottom:10px">运行库实况</h4>
+      <table>
+        <tr><td>proposals 提议表</td><td class="bad mono">0 条</td></tr>
+        <tr><td>negative_samples</td><td class="bad mono">2 条（全来自 watchdog-restart）</td></tr>
+        <tr><td>frozen_rules</td><td class="warn mono">2 条（bootstrap 预置，非进化产物）</td></tr>
+        <tr><td>brain.db usage / memories / scenes</td><td class="bad mono">0 / 0 / 0</td></tr>
+        <tr><td>系统自我变强次数</td><td class="bad mono">0（全靠 human 手写补丁）</td></tr>
+      </table>
+    </div>
+    <div class="card">
+      <h4 style="font-size:12px;letter-spacing:2px;color:var(--tx3);margin-bottom:10px">目标函数必须重定义</h4>
+      <table>
+        <tr><th></th><th>现状（隐式）</th><th>目标（显式）</th></tr>
+        <tr><td>优化目标</td><td>最小化失败次数</td><td class="up">最大化一次通过率 C(t)</td></tr>
+        <tr><td>约束</td><td class="bad">无</td><td>K ∈ [0.8K̄, 1.2K̄] 且 ≤ K_max</td></tr>
+        <tr><td>触发</td><td>同 reason 累计 ≥10</td><td class="up">预估 ΔC/ΔK 排名 top-1</td></tr>
+        <tr><td>方向</td><td class="bad">只减（冻结）</td><td class="up">只增（规则/技能/案例/路由）</td></tr>
+        <tr><td>验证</td><td class="bad">无</td><td>CBS 回归门 + 成本门</td></tr>
+      </table>
+      <p style="margin-top:12px;font-size:13px;color:var(--tx3)">
+        现状的"最小化失败"最优解是<b style="color:var(--red)">什么都不做</b>——不做就不会失败。
+      </p>
+    </div>
+  </div>
+
+  <div class="card">
+    <table>
+      <tr><th style="width:24%">死结</th><th style="width:30%">源码位置</th><th>后果</th></tr>
+      <tr>
+        <td>① 只会冻结不会改进</td>
+        <td class="mono">evolve/service.ts:114-126<br>唯一产出 kind = 'add-rule'</td>
+        <td>系统唯一的"学习"动作是<b style="color:var(--red)">把自己越勒越紧</b>。学一万次后 frozen_rules 塞满、所有写入全部 deny → 彻底瘫死。这是<b>学久必瘫</b>，不是学久变强。A1 在这里是<b style="color:var(--red)">反向</b>的。</td>
+      </tr>
+      <tr>
+        <td>② 成功路径完全静默</td>
+        <td class="mono">supervisor/service.ts:157-161<br>allow 分支直接 return，不写库</td>
+        <td>只记录"哪里错了"，从不记录"什么是对的"。只从失败学习的系统，最优解是<b style="color:var(--red)">什么都不做</b>。固化通道被堵死，A1 无法启动。</td>
+      </tr>
+      <tr>
+        <td>③ 没有能力/成本度量</td>
+        <td class="mono">全仓库无 C(t)/K(t) 定义<br>触发条件是频次启发式</td>
+        <td>A1、A2 两条公理在工程上<b style="color:var(--red)">无法表达、无法验证</b>。进化没有方向。</td>
+      </tr>
+      <tr>
+        <td>④ 可感知层为零</td>
+        <td class="mono">client/ 无三架构 UI<br>onDecision 零订阅者<br>skill-store.ts:406 distill 从未赋值</td>
+        <td>系统在跑但用户感受不到。感受不到的架构等于不存在；更糟的是它让我们<b style="color:var(--red)">发现不了死结 ①②③</b>——因为界面上一切正常。</td>
+      </tr>
+    </table>
+  </div>
+</section>
+
+<!-- ============ 6 可感知层 ============ -->
+<section id="sense">
+  <h2><span class="n">6</span>可感知层 P0–P3 · 界面原型</h2>
+  <p class="sub">让用户在 LLM 聊天窗口里真正看见三架构。全部依赖已存在的 <span class="mono">SupervisorService.onDecision</span>（当前零订阅者），接上即可，不必改内核。</p>
+
+  <div class="split">
+    <div class="mock">
+      <div class="mockbar">
+        <span class="dot" style="background:#ef4444"></span>
+        <span class="dot" style="background:#f59e0b"></span>
+        <span class="dot" style="background:#22c55e"></span>
+        <span style="margin-left:8px">蝶翅 · LLM 窗口 — localhost:3090</span>
+      </div>
+
+      <!-- P0 状态条 -->
+      <div class="statusbar">
+        <span class="pulse"></span>
+        <span>监督者</span>
+        <span class="tag t-ok">本轮放行 12</span>
+        <span class="tag t-deny">冻结 0</span>
+        <span class="tag t-solid">进化提议 3 待审</span>
+        <span style="color:var(--green)">能力 0.71 ↑</span>
+        <span style="color:var(--amber)">成本 0.98× 带内</span>
+      </div>
+
+      <div class="body">
+        <div class="msg u">把这周的销售数据按区域汇总，做成表格</div>
+        <div class="msg a">
+          已汇总完成，共 7 个区域、42 行明细。华东同比 +18.2%，华南 −4.1%，其余区域波动在 3% 以内。
+          需要我顺手把异常值标出来吗？
+        </div>
+
+        <!-- P1 成功也要发声 -->
+        <div class="whisper">
+          <span>◆</span>
+          <span>这个套路已固化（第 3 次命中，命中率 91%），下次同类请求直接复用，节省约 6 次采样。</span>
+        </div>
+
+        <!-- P3 返工按钮 -->
+        <div class="rework">
+          <button>👎 这不对</button>
+          <button>↺ 我返工了</button>
+          <button>👍 采纳</button>
+        </div>
+
+        <!-- P2 提议卡片 -->
+        <div class="proposal">
+          <div class="hd">
+            <b>◆ 进化提议 #12 · 待审</b>
+            <span class="kind">add-case</span>
+          </div>
+          <dl>
+            <dt>为什么</dt><dd>「按区域汇总表格」类请求连续 3 次一次通过，且用户均未返工</dd>
+            <dt>动作</dt><dd>把本次的字段映射与分组顺序存进案例库，供 RAG 检索复用</dd>
+            <dt>预期</dt><dd style="color:var(--green)">ΔC +0.021　ΔK −0.04（成本下降）</dd>
+            <dt>证据</dt><dd class="mono">positive_samples #318, #341, #366</dd>
+            <dt>回滚</dt><dd>标记 superseded 即可，不物理删除</dd>
+          </dl>
+          <div class="acts">
+            <button class="btn pri">✓ 批准合并</button>
+            <button class="btn">✕ 拒绝</button>
+            <button class="btn">⏭ 稍后</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="feed" style="height:auto">
+      <h4>P0–P3 分级</h4>
+      <ul style="max-height:none">
+        <li><span class="tag t-ok">P0</span><span>状态条 — 常驻监督者状态，证明架构在跑</span></li>
+        <li><span class="tag t-solid">P1</span><span>成功也要发声 — 固化时插入一行小字，让 A1 可被感知</span></li>
+        <li><span class="tag t-thr">P2</span><span>提议卡片 — 带 ΔC/ΔK 与证据，可一键批准</span></li>
+        <li><span class="tag t-deny">P3</span><span>返工按钮 — 打通 explicit-bad 强负样本通道</span></li>
+      </ul>
+      <h4 style="margin-top:20px">L1 需要采集的四个信号</h4>
+      <ul style="max-height:none">
+        <li><span class="tag t-ok">no-rework</span><span>用户未修改需求 → 强正样本</span></li>
+        <li><span class="tag t-ok">accepted</span><span>点了采纳/保存/复制 → 最强正样本</span></li>
+        <li><span class="tag t-deny">user-undo</span><span>撤回、重生成 → 负样本</span></li>
+        <li><span class="tag t-deny">explicit-bad</span><span>点「这不对」→ 强负样本</span></li>
+      </ul>
+      <p style="margin-top:14px;font-size:12px;color:var(--tx3);line-height:1.6">
+        只有把这四个信号采回来，C(t) 才与用户体感真正对齐。<br>
+        建议先在 <span class="mono">decideCore</span> allow 分支加一行异步 <span class="mono">recordAllow()</span>，成本可忽略。
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ 7 路线图 ============ -->
+<section id="road">
+  <h2><span class="n">7</span>实施路线图 · 顺序不可颠倒</h2>
+  <p class="sub">S0 不做，后面全部无法验收。</p>
+  <div class="card rm">
+    <div class="step">
+      <div class="id">S0</div>
+      <div class="ct">
+        <h4>度量先行</h4>
+        <p>CBS 冻结基准集（50–100 条，带确定性判定器）+ <span class="mono">capability_snapshots</span> + <span class="mono">positive_samples</span> 两张表 + K̄ / K_max 定义与采集。</p>
+        <p class="dep">依赖：无　·　验收：能画出真实的 C(t)、K(t) 两条曲线（哪怕是平的）</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="id">S1</div>
+      <div class="ct">
+        <h4>成功路径采集</h4>
+        <p><span class="mono">recordAllow()</span> + 前端四信号（no-rework / accepted / user-undo / explicit-bad）。解开死结 ②。</p>
+        <p class="dep">依赖 S0　·　验收：正样本日增量 &gt; 0</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="id">S2</div>
+      <div class="ct">
+        <h4>提议多样化</h4>
+        <p>evolve 从 1 种 kind 扩到 7 种（add-skill / add-case / add-prompt / re-route / revise-scope / prune-cache / add-rule 降级为最后手段），触发条件改为 ΔC/ΔK 排名 top-1。解开死结 ①。</p>
+        <p class="dep">依赖 S1　·　验收：非 add-rule 提议占比 ≥ 50%</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="id">S3</div>
+      <div class="ct">
+        <h4>沙盒双门</h4>
+        <p>子进程评估（复用 watchdog 独立进程模型，DSH 不能评估自己）+ 回归门 + 成本门。</p>
+        <p class="dep">依赖 S2 / watchdog　·　验收：有提议被门拦下的实测记录</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="id">S4</div>
+      <div class="ct">
+        <h4>可感知层</h4>
+        <p>P0 状态条 → P1 成功发声 → P2 提议卡片 → P3 返工按钮。解开死结 ④。</p>
+        <p class="dep">依赖 S1　·　验收：用户在聊天窗口能看到全部四类反馈</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="id">S5</div>
+      <div class="ct">
+        <h4>可证伪实验</h4>
+        <p>换 1B 弱模型 + 加算力，看能否追平 7B。出一份实验报告，<b style="color:var(--amber)">无论结论如何</b>。</p>
+        <p class="dep">依赖 S3　·　验收：实验报告（结论为证伪同样有价值）</p>
+      </div>
+    </div>
+  </div>
+
+  <div style="height:20px"></div>
+  <div class="card">
+    <h4 style="font-size:12px;letter-spacing:2px;color:var(--tx3);margin-bottom:12px">验收指标 · 做不到就算没做</h4>
+    <table>
+      <tr><th>指标</th><th style="width:30%">目标</th><th style="width:26%">当前</th></tr>
+      <tr><td>proposals 周产出（非 add-rule 类）</td><td class="up">≥ 3 条 / 周</td><td class="bad mono">0</td></tr>
+      <tr><td>positive_samples 日增量</td><td class="up">≥ 日均对话数 × 0.3</td><td class="bad mono">0（表不存在）</td></tr>
+      <tr><td>C(t) 30 天趋势</td><td class="up">单调不减，且 ≥ +0.05</td><td class="bad mono">无度量</td></tr>
+      <tr><td>K(t) 30 天波动</td><td class="up">全部落在 ±20% 带内</td><td class="bad mono">无度量</td></tr>
+      <tr><td>合并提议中 add-rule 占比</td><td class="up">≤ 20%</td><td class="bad mono">100%（设计上）</td></tr>
+      <tr><td>用户能在 UI 上看到监督者</td><td class="up">是</td><td class="bad mono">否</td></tr>
+    </table>
+  </div>
+</section>
+
+<footer>
+  蝶翅三架构 · 自进化完整设计 v2　|　2026-08-30　|　配套文档：
+  <span class="mono">diechi-harness/docs/三架构自进化-完整设计-v2.md</span>
+</footer>
+</div>
+
+<script>
+/* ============================================================
+   1) 双曲线实时模拟
+   ============================================================ */
+const cv = document.getElementById('cv');
+const cx = cv.getContext('2d');
+const sN = document.getElementById('sN'), sP = document.getElementById('sP');
+const vN = document.getElementById('vN'), vP = document.getElementById('vP');
+const oC = document.getElementById('oC'), oK = document.getElementById('oK'), oS = document.getElementById('oS');
+const btnRun = document.getElementById('btnRun'), btnSolid = document.getElementById('btnSolid'), btnReset = document.getElementById('btnReset');
+const feedEl = document.getElementById('feed');
+
+const MAXPT = 150;
+const KMAX = 1.75;            // 硬顶
+let S, running = true, timer = null;
+
+function reset(){
+  S = {
+    t: 0,
+    hist: [],                 // {c, cs, k, ke, hi, lo, solid, thr}
+    solid: 0,                 // 固化条目数
+    baseline: 0.15,           // 固化能力基线（单调不减）
+    kema: 1.0,
+    nAllow: 8,                // 监督者允许的采样数
+    pass: 0, total: 0,
+    recent: []
+  };
+  feedEl.innerHTML = '';
+  draw();
+}
+reset();
+
+function p(){ return +sP.value / 100; }
+function nWant(){ return +sN.value; }
+
+function log(kind, text){
+  const li = document.createElement('li');
+  const now = new Date();
+  const ts = String(now.getMinutes()).padStart(2,'0') + ':' + String(now.getSeconds()).padStart(2,'0');
+  li.innerHTML = '<span class="t">' + ts + '</span><span class="tag ' + kind + '">' +
+    ({ 't-ok':'allow','t-deny':'deny','t-solid':'固化','t-thr':'降档' }[kind]) + '</span><span>' + text + '</span>';
+  feedEl.prepend(li);
+  while (feedEl.children.length > 40) feedEl.lastChild.remove();
+}
+
+function tick(){
+  S.t++;
+  const P = p();
+  // 固化覆盖率：随固化条目增长，边际递减，封顶 0.85
+  const cover = 0.85 * (1 - Math.pow(0.93, S.solid));
+  const hitSolid = Math.random() < cover;
+
+  let n, ok, k;
+  if (hitSolid){
+    n = 1;
+    ok = Math.random() < 0.96;                 // 固化命中，几乎必对
+    k = 0.28 + Math.random() * 0.10;           // 检索成本，很便宜
+  } else {
+    n = Math.max(1, Math.min(Math.round(S.nAllow), nWant()));
+    ok = Math.random() < (1 - Math.pow(1 - P, n));
+    k = 0.30 + 0.72 * (n / 20) + (Math.random() - 0.5) * 0.10;
+  }
+
+  // ── 成本带守卫（A2）
+  let thr = false;
+  const hi = S.kema * 1.2, lo = S.kema * 0.8;
+  if (k > hi){ S.nAllow = Math.max(1, Math.round(S.nAllow * 0.78)); thr = true;
+               log('t-thr', 'K=' + k.toFixed(2) + ' 超带上限 ' + hi.toFixed(2) + ' → 降档 N≤' + S.nAllow); }
+  else if (k < lo){ S.nAllow = Math.min(40, Math.round(S.nAllow * 1.12) + 1); }
+  if (k > KMAX){ k = KMAX; log('t-deny', 'K 触硬顶 K_max=' + KMAX + ' → 拒绝服务，强制降档'); S.nAllow = 1; }
+
+  S.kema = S.kema * 0.9 + k * 0.1;
+
+  // ── 采样与统计
+  S.total++; if (ok) S.pass++;
+  S.recent.push(ok ? 1 : 0); if (S.recent.length > 25) S.recent.shift();
+  const cInst = S.recent.reduce((a,b)=>a+b,0) / S.recent.length;
+
+  // ── 固化（A1：只增不减）
+  let solid = false;
+  if (ok && !hitSolid && Math.random() < 0.13){
+    S.solid++;
+    const d = 0.030 * Math.pow(0.97, S.solid) + Math.random() * 0.012;  // 边际递减但恒为正
+    S.baseline = Math.min(0.985, S.baseline + d);
+    solid = true;
+    log('t-solid', '固化 #' + S.solid + ' → 能力基线 ' + S.baseline.toFixed(3) + ' (Δ+' + d.toFixed(3) + ')');
+  }
+  // 基线兜住实时值：能力曲线不允许跌破已固化的能力
+  const cSolid = Math.max(S.baseline, Math.min(0.99, cInst * 0.35 + S.baseline * 0.65));
+
+  S.hist.push({ c: cInst, cs: cSolid, k: k, ke: S.kema, hi: S.kema*1.2, lo: S.kema*0.8, solid: solid, thr: thr });
+  if (S.hist.length > MAXPT) S.hist.shift();
+
+  if (solid) log('t-ok', 'allow · 一次通过，已转固化');
+  else if (ok) log('t-ok', 'allow · n=' + n + (hitSolid ? '（命中固化，免采样）' : ''));
+  else log('t-deny', '采样失败 n=' + n + ' → 写 negative_samples');
+
+  draw();
+  oC.textContent = cSolid.toFixed(3);
+  oK.textContent = k.toFixed(2) + '×';
+  oK.className = (k > hi) ? 'bad' : (k > S.kema ? 'warn' : 'cy');
+  oS.textContent = S.solid;
+}
+
+/* ---------- 绘制 ---------- */
+function draw(){
+  const dpr = window.devicePixelRatio || 1;
+  const W = cv.clientWidth, H = 440;
+  cv.width = W * dpr; cv.height = H * dpr;
+  cx.setTransform(dpr,0,0,dpr,0,0);
+  cx.clearRect(0,0,W,H);
+
+  const pad = { l: 46, r: 16, t: 16, b: 14 };
+  const gap = 46;
+  const h1 = (H - pad.t - pad.b - gap) * 0.52;   // 能力区高
+  const h2 = (H - pad.t - pad.b - gap) * 0.48;   // 成本区高
+  const y1 = pad.t, y2 = pad.t + h1 + gap;
+  const w = W - pad.l - pad.r;
+
+  // 网格
+  cx.strokeStyle = '#1b2532'; cx.lineWidth = 1; cx.font = '10px Consolas,monospace';
+  cx.fillStyle = '#4a5c70';
+  for (let i = 0; i <= 4; i++){
+    const yy = y1 + h1 * i / 4;
+    cx.beginPath(); cx.moveTo(pad.l, yy); cx.lineTo(pad.l + w, yy); cx.stroke();
+    cx.textAlign = 'right'; cx.fillText((1 - i/4).toFixed(2), pad.l - 8, yy + 3);
+  }
+  cx.textAlign = 'left'; cx.fillStyle = '#38bdf8';
+  cx.fillText('能力 C(t)', pad.l, y1 - 4);
+
+  for (let i = 0; i <= 3; i++){
+    const v = (KMAX + 0.15) * i / 3;
+    const yy = y2 + h2 - h2 * (v / (KMAX + 0.15));
+    cx.strokeStyle = '#1b2532';
+    cx.beginPath(); cx.moveTo(pad.l, yy); cx.lineTo(pad.l + w, yy); cx.stroke();
+    cx.fillStyle = '#4a5c70'; cx.textAlign = 'right';
+    cx.fillText(v.toFixed(1), pad.l - 8, yy + 3);
+  }
+  cx.textAlign = 'left'; cx.fillStyle = '#f59e0b';
+  cx.fillText('成本 K(t)', pad.l, y2 - 6);
+
+  const N = S.hist.length;
+  if (N < 2){
+    cx.fillStyle = '#3c4c5e'; cx.textAlign = 'center'; cx.font = '13px sans-serif';
+    cx.fillText('等待数据…', pad.l + w/2, y1 + h1/2);
+    return;
+  }
+  const X = i => pad.l + w * i / (MAXPT - 1);
+
+  // ---------- 能力区 ----------
+  // 实时通过率（细线）
+  cx.beginPath();
+  S.hist.forEach((d,i) => { const yy = y1 + h1 * (1 - Math.max(0,Math.min(1,d.c))); i ? cx.lineTo(X(i), yy) : cx.moveTo(X(i), yy); });
+  cx.strokeStyle = 'rgba(56,189,248,.55)'; cx.lineWidth = 1.4; cx.stroke();
+
+  // 能力区渐变填充（基线下）
+  cx.beginPath();
+  S.hist.forEach((d,i) => { const yy = y1 + h1 * (1 - d.cs); i ? cx.lineTo(X(i), yy) : cx.moveTo(X(i), yy); });
+  cx.lineTo(X(N-1), y1 + h1); cx.lineTo(X(0), y1 + h1); cx.closePath();
+  const g = cx.createLinearGradient(0, y1, 0, y1 + h1);
+  g.addColorStop(0, 'rgba(34,197,94,.22)'); g.addColorStop(1, 'rgba(34,197,94,0)');
+  cx.fillStyle = g; cx.fill();
+
+  // 固化能力基线（粗线，阶梯单调）
+  cx.beginPath();
+  S.hist.forEach((d,i) => { const yy = y1 + h1 * (1 - d.cs); i ? cx.lineTo(X(i), yy) : cx.moveTo(X(i), yy); });
+  cx.strokeStyle = '#22c55e'; cx.lineWidth = 2.6; cx.lineJoin = 'round'; cx.stroke();
+
+  // 固化事件点
+  S.hist.forEach((d,i) => {
+    if (!d.solid) return;
+    const yy = y1 + h1 * (1 - d.cs);
+    cx.beginPath(); cx.arc(X(i), yy, 4.2, 0, Math.PI*2);
+    cx.fillStyle = '#a78bfa'; cx.fill();
+    cx.strokeStyle = '#0a0e14'; cx.lineWidth = 1.5; cx.stroke();
+  });
+
+  // ---------- 成本区 ----------
+  const KSC = KMAX + 0.15;
+  const YK = v => y2 + h2 - h2 * (Math.max(0, Math.min(KSC, v)) / KSC);
+
+  // ±20% 带
+  cx.beginPath();
+  S.hist.forEach((d,i) => { i ? cx.lineTo(X(i), YK(d.hi)) : cx.moveTo(X(i), YK(d.hi)); });
+  for (let i = N-1; i >= 0; i--) cx.lineTo(X(i), YK(S.hist[i].lo));
+  cx.closePath();
+  cx.fillStyle = 'rgba(245,158,11,.13)'; cx.fill();
+
+  // EMA 基线
+  cx.beginPath();
+  S.hist.forEach((d,i) => { i ? cx.lineTo(X(i), YK(d.ke)) : cx.moveTo(X(i), YK(d.ke)); });
+  cx.strokeStyle = 'rgba(245,158,11,.45)'; cx.lineWidth = 1; cx.setLineDash([4,3]); cx.stroke(); cx.setLineDash([]);
+
+  // K 曲线
+  cx.beginPath();
+  S.hist.forEach((d,i) => { i ? cx.lineTo(X(i), YK(d.k)) : cx.moveTo(X(i), YK(d.k)); });
+  cx.strokeStyle = '#f59e0b'; cx.lineWidth = 1.8; cx.stroke();
+
+  // 硬顶
+  const yKmax = YK(KMAX);
+  cx.beginPath(); cx.moveTo(pad.l, yKmax); cx.lineTo(pad.l + w, yKmax);
+  cx.strokeStyle = '#ef4444'; cx.lineWidth = 1.2; cx.setLineDash([6,4]); cx.stroke(); cx.setLineDash([]);
+  cx.fillStyle = '#ef4444'; cx.font = '10px Consolas,monospace'; cx.textAlign = 'left';
+  cx.fillText('K_max 硬顶 ' + KMAX.toFixed(2), pad.l + 6, yKmax - 5);
+
+  // 降档点
+  S.hist.forEach((d,i) => {
+    if (!d.thr) return;
+    cx.beginPath(); cx.arc(X(i), YK(d.k), 4, 0, Math.PI*2);
+    cx.fillStyle = '#ef4444'; cx.fill();
+  });
+
+  // 当前值游标
+  const last = S.hist[N-1];
+  cx.beginPath(); cx.arc(X(N-1), y1 + h1 * (1 - last.cs), 4.5, 0, Math.PI*2);
+  cx.fillStyle = '#22c55e'; cx.fill();
+  cx.beginPath(); cx.arc(X(N-1), YK(last.k), 4.5, 0, Math.PI*2);
+  cx.fillStyle = '#f59e0b'; cx.fill();
+}
+
+/* ---------- 控制 ---------- */
+sN.oninput = () => { vN.textContent = sN.value; };
+sP.oninput = () => { vP.textContent = (sP.value/100).toFixed(2); };
+btnRun.onclick = () => {
+  running = !running;
+  btnRun.textContent = running ? '⏸ 暂停' : '▶ 继续';
+  btnRun.classList.toggle('pri', running);
+};
+btnSolid.onclick = () => {
+  S.solid++;
+  const d = 0.030 * Math.pow(0.97, S.solid) + Math.random() * 0.012;
+  S.baseline = Math.min(0.985, S.baseline + d);
+  log('t-solid', '人工固化 #' + S.solid + ' → 能力基线 ' + S.baseline.toFixed(3) + ' (Δ+' + d.toFixed(3) + ')');
+  oS.textContent = S.solid;
+  if (S.hist.length){
+    const l = S.hist[S.hist.length-1];
+    l.solid = true; l.cs = Math.max(l.cs, S.baseline);
+  }
+  draw();
+};
+btnReset.onclick = () => { reset(); oC.textContent='—'; oK.textContent='—'; oS.textContent='0'; };
+
+function loop(){ if (running) tick(); }
+timer = setInterval(loop, 620);
+
+/* ============================================================
+   2) 弱模型放大律
+   ============================================================ */
+const cv2 = document.getElementById('cv2'), c2 = cv2.getContext('2d');
+const aP = document.getElementById('aP'), aN = document.getElementById('aN');
+const aPv = document.getElementById('aPv'), aNv = document.getElementById('aNv');
+const aC1 = document.getElementById('aC1'), aCN = document.getElementById('aCN'), aM = document.getElementById('aM');
+
+function drawAmp(){
+  const dpr = window.devicePixelRatio || 1;
+  const W = cv2.clientWidth, H = 300;
+  cv2.width = W * dpr; cv2.height = H * dpr;
+  c2.setTransform(dpr,0,0,dpr,0,0);
+  c2.clearRect(0,0,W,H);
+
+  const pad = { l: 46, r: 20, t: 18, b: 30 };
+  const w = W - pad.l - pad.r, h = H - pad.t - pad.b;
+  const p = +aP.value / 100, Nmax = +aN.value;
+
+  // 网格
+  c2.strokeStyle = '#1b2532'; c2.lineWidth = 1; c2.font = '10px Consolas,monospace';
+  c2.fillStyle = '#4a5c70'; c2.textAlign = 'right';
+  for (let i = 0; i <= 4; i++){
+    const yy = pad.t + h * i / 4;
+    c2.beginPath(); c2.moveTo(pad.l, yy); c2.lineTo(pad.l + w, yy); c2.stroke();
+    c2.fillText((1 - i/4).toFixed(2), pad.l - 8, yy + 3);
+  }
+  c2.textAlign = 'center';
+  for (let i = 0; i <= 5; i++){
+    const xx = pad.l + w * i / 5;
+    c2.fillText(String(Math.round(Nmax * i / 5)), xx, H - 12);
+  }
+  c2.fillStyle = '#5d7186'; c2.textAlign = 'center';
+  c2.fillText('算力 N（有效独立采样数）', pad.l + w/2, H - 1);
+
+  const X = n => pad.l + w * (n / Nmax);
+  const Y = c => pad.t + h * (1 - Math.max(0, Math.min(1, c)));
+  const f = n => 1 - Math.pow(1 - p, n);
+
+  // 填充
+  c2.beginPath(); c2.moveTo(X(0), Y(0));
+  for (let n = 0; n <= Nmax; n += Nmax/200) c2.lineTo(X(n), Y(f(n)));
+  c2.lineTo(X(Nmax), pad.t + h); c2.lineTo(X(0), pad.t + h); c2.closePath();
+  const gg = c2.createLinearGradient(0, pad.t, 0, pad.t + h);
+  gg.addColorStop(0,'rgba(34,197,94,.28)'); gg.addColorStop(1,'rgba(34,197,94,.02)');
+  c2.fillStyle = gg; c2.fill();
+
+  // 曲线
+  c2.beginPath();
+  for (let n = 0; n <= Nmax; n += Nmax/200){ const xx = X(n), yy = Y(f(n)); n === 0 ? c2.moveTo(xx,yy) : c2.lineTo(xx,yy); }
+  c2.strokeStyle = '#22c55e'; c2.lineWidth = 2.4; c2.stroke();
+
+  // 裸模型参考线
+  c2.beginPath(); c2.moveTo(pad.l, Y(p)); c2.lineTo(pad.l + w, Y(p));
+  c2.strokeStyle = 'rgba(239,68,68,.5)'; c2.lineWidth = 1; c2.setLineDash([5,4]); c2.stroke(); c2.setLineDash([]);
+  c2.fillStyle = '#ef4444'; c2.textAlign = 'left'; c2.font = '10px Consolas,monospace';
+  c2.fillText('裸模型 C(1) = ' + p.toFixed(3), pad.l + 6, Y(p) - 6);
+
+  // 当前 N 标记
+  const cN = f(Nmax);
+  c2.beginPath(); c2.arc(X(Nmax), Y(cN), 5, 0, Math.PI*2);
+  c2.fillStyle = '#22c55e'; c2.fill();
+  c2.fillStyle = '#22c55e'; c2.font = 'bold 12px Consolas,monospace'; c2.textAlign = 'right';
+  c2.fillText(cN.toFixed(3), X(Nmax) - 10, Y(cN) - 10);
+
+  aPv.textContent = p.toFixed(2);
+  aNv.textContent = Nmax;
+  aC1.textContent = (p*100).toFixed(1) + '%';
+  aCN.textContent = (cN*100).toFixed(1) + '%';
+  aM.textContent = '×' + (cN / p).toFixed(2);
+}
+aP.oninput = aN.oninput = drawAmp;
+drawAmp();
+
+/* ============================================================
+   3) 导航高亮 & 尺寸自适应
+   ============================================================ */
+const links = [...document.querySelectorAll('nav a')];
+const secs = links.map(a => document.querySelector(a.getAttribute('href')));
+function onScroll(){
+  const y = window.scrollY + 90;
+  let idx = 0;
+  secs.forEach((s,i) => { if (s && s.offsetTop <= y) idx = i; });
+  links.forEach((a,i) => a.classList.toggle('on', i === idx));
+}
+window.addEventListener('scroll', onScroll);
+window.addEventListener('resize', () => { draw(); drawAmp(); });
+onScroll();
+</script>
+</body>
+</html>

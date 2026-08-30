@@ -248,6 +248,12 @@
     - id: ui-diechi-brain
       name: '@deepseek-ai/dsh-client-ui-diechi-brain'
 
+    # 自进化可感知层：侧边栏底部 C 分数徽章 + 全屏浮层的 C/K 双曲线面板。
+    # 依赖 diechi-supervisor host 插件的 EvolutionGateway RPC（remote.diechiEvolution），
+    # 由 api-remotes 客户端聚合挂载；supervisor 未加载时按钮降级为「不可达」而非报错。
+    - id: ui-self-evolution
+      name: '@deepseek-ai/dsh-client-ui-self-evolution'
+
     - id: ui-subagent
       name: '@deepseek-ai/dsh-client-ui-subagent'
 

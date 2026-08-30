@@ -7,8 +7,35 @@
 /** 提议状态。 */
 export type ProposalStatus = 'pending' | 'allowed' | 'denied' | 'superseded'
 
-/** 提议的"修改"目标：当前 P2 仅支持 'add-rule'。 */
-export type ProposalChangeKind = 'add-rule' | 'revise-scope' | 'add-bootstrap'
+/**
+ * 提议的"修改"目标。
+ *
+ * 历史死结：P2 阶段**只**产出 `add-rule`（把 scope 写进 frozen_rules 永久 deny）。
+ * 那意味着系统唯一的"学习"动作是把自己越勒越紧——跑一万次后所有写入全部 deny，
+ * 系统彻底瘫死。这是**学久必瘫**，不是学久变强，公理 A1 在这里是**反向**的。
+ *
+ * 现在扩到 8 种，其中 5 种是"增加能力"而非"禁止动作"。
+ */
+export type ProposalChangeKind =
+  /** 冻结某 scope——**最后手段**，仅当无任何正样本且失败极高频时使用。 */
+  | 'add-rule'
+  /** 把成功套路固化成一个可复用技能（平权技能）。 */
+  | 'add-skill'
+  /** 把成功案例存进案例库，供 RAG 检索复用。 */
+  | 'add-case'
+  /** 新增/修正一段 system prompt 片段。 */
+  | 'add-prompt'
+  /** 调整路由表：哪类任务用哪个模型 / 采样数 N。 */
+  | 're-route'
+  /** 放宽或收紧某 scope 的授权。 */
+  | 'revise-scope'
+  /**
+   * 清理无效固化——**唯一允许删的类型**，且必须过双门证明不劣。
+   * A1 要求能力只增不减；删只在"删掉的是负债"时成立，故门槛最高。
+   */
+  | 'prune-cache'
+  /** 历史类型：启动时把已知该冻结的基线化。新逻辑不再生成，保留仅为兼容旧数据。 */
+  | 'add-bootstrap'
 
 /** 提议的"修改"内容（string format = `<kind>:<id> <details>`）。 */
 export interface ProposalChange {
@@ -27,10 +54,22 @@ export interface ProposalDraft {
   readonly change: ProposalChange
   /** 引用的负样本 id 列表。 */
   readonly evidence: readonly number[]
-  /** 为什么这个修改能减少负样本。 */
+  /** 为什么这个修改能减少负样本（或增加正样本）。 */
   readonly rationale: string
   /** 撤回步骤（必填）。 */
   readonly rollbackPlan: string
+  /**
+   * 预估能力增量 ΔC（一次通过率，0..1 尺度）。
+   * 排序用；真实值由沙盒跑 CBS 后回填，这里的估算只决定"先试哪个"。
+   */
+  readonly estimatedDc: number
+  /**
+   * 预估成本增量 ΔK（归一化成本倍率）。负数表示省钱。
+   * 固化类提议天然为负——采样的收益一次性，固化的收益永久性。
+   */
+  readonly estimatedDk: number
+  /** add-rule 专用：冻结会永久 deny 写入，必须 human 二次确认。 */
+  readonly needsHumanConfirm?: boolean
 }
 
 /** 数据库行。 */

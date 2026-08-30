@@ -11,6 +11,7 @@
     { "path": "../../util/brand" },
     { "path": "../../runtime-diagnostics/invariants" },
     { "path": "../skill-store" },
-    { "path": "../../core/tools" }
+    { "path": "../../core/tools" },
+    { "path": "../../typert/protocol" }
   ]
 }
