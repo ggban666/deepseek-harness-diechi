@@ -26,6 +26,9 @@ export type BrainConsoleLocaleKey =
   | 'errorAction'
   | 'okAction'
   | 'readOnly'
+  | 'supervisionFlagged'
+  | 'supervisionDenied'
+  | 'supervisionTooltip'
 
 
 export const zh: Record<BrainConsoleLocaleKey, string> = {
@@ -54,6 +57,9 @@ export const zh: Record<BrainConsoleLocaleKey, string> = {
   errorAction: '操作失败',
   okAction: '完成',
   readOnly: '只读：当前文档不允许写入。',
+  supervisionFlagged: '监督者标了待审',
+  supervisionDenied: '监督者拒绝写入',
+  supervisionTooltip: '这一行被三架构监督者标了 flag-review / deny。打开需要重新走 gateWrite。',
 }
 
 export const en: Record<BrainConsoleLocaleKey, string> = {
@@ -82,4 +88,7 @@ export const en: Record<BrainConsoleLocaleKey, string> = {
   errorAction: 'Action failed',
   okAction: 'Done',
   readOnly: 'Read-only: the current document rejects writes.',
+  supervisionFlagged: 'Supervisor flagged',
+  supervisionDenied: 'Supervisor denied',
+  supervisionTooltip: 'This row was flagged or denied by the three-architecture supervisor. Re-opening must clear the gateWrite again.',
 }

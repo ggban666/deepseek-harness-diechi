@@ -51,6 +51,24 @@ async function harness(skills: readonly HarnessSkill[] = []): Promise<{
       return () => {}
     },
   } as never)
+  // 三架构基座保护：BrainGateway 的业务写入（learn / remember）走 gateWrite，
+  // 缺 ctx.supervision 会抛 SupervisionMissingError。本测试只验证 BrainGateway
+  // 的收件箱/归位/标签逻辑，不验证监督者闸——注入全 allow 的 stub 让 gateway 可测。
+  ctx.provide('supervision', {
+    decide: () => ({ decision: 'allow' }),
+    recordDeny: () => 0,
+    recordFlag: () => 0,
+    // 真正把 supervision 注入 brain —— 否则 PersonBrain 内部 supervision 仍为 undefined
+    attachBrain: (brain: { setSupervisionContext(ctx: unknown): void }) => {
+      brain.setSupervisionContext({
+        decide: () => ({ decision: 'allow' }),
+        recordDeny: () => 0,
+        recordFlag: () => 0,
+      })
+    },
+    detachBrain: () => {},
+    detachAll: () => {},
+  } as never)
   await ctx.plugin(BrainGateway)
   const brain = ctx.get('diechiBrain') as BrainGateway
   return { ctx, brain, emitVision }
@@ -123,6 +141,12 @@ describe('BrainGateway', () => {
       expect(inbox[0]?.status).toBe('assigned')
       expect(inbox[0]?.suggestedSkill).toBe('plumbing')
       const skillBrain = PersonBrain.open(join(dshHomeDir(), 'persons', 'plumbing'))
+      // 三架构基座保护：person brain 写入也走 gateWrite——注入 all-allow stub
+      skillBrain.setSupervisionContext({
+        decide: () => ({ decision: 'allow' }),
+        recordDeny: () => 0,
+        recordFlag: () => 0,
+      })
       try {
         const rows = skillBrain.recallKnowledge('实操：修水管')
         expect(rows.length).toBe(1)
@@ -179,6 +203,11 @@ describe('BrainGateway', () => {
       ])
       // 模拟低置信度归纳：直接写入带待确认标记的知识。
       const global = PersonBrain.openGlobal()
+      global.setSupervisionContext({
+        decide: () => ({ decision: 'allow' }),
+        recordDeny: () => 0,
+        recordFlag: () => 0,
+      })
       global.learn('对话：用户生日', '用户生日是 1994 年 3 月 8 日', 'fact', 'conversation', true)
       global.close()
       expect(brain.list().items[0]?.needsReview).toBe(true)

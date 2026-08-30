@@ -46,6 +46,14 @@ export interface PersonMemory {
   readonly createdAt: string
   /** 待人工确认标记（自动除幻觉：低置信度/疑似推断的记忆不参与注入，确认后才生效）。 */
   readonly needsReview: boolean
+  /**
+   * 监督者决策：写入本行时 supervise.decide() 的结果。
+   * - 'allow'：正常写入
+   * - 'flag-review'：落库但 needs_review=1，待人类确认
+   * - 'deny'：不会到这里（已抛 SupervisionDeniedError）
+   * UI / 阅历控制台 / 监督者审计均读这个字段区分"已确认" vs "监督者标了待审"。
+   */
+  readonly supervisionDecision: SupervisionDecision
 }
 
 /** 一条人格长期知识。 */
@@ -66,6 +74,8 @@ export interface PersonKnowledge {
   readonly updatedAt: string
   /** 待人工确认：低置信度归纳先打标记，用户确认后才参与归位/注入。 */
   readonly needsReview: boolean
+  /** 监督者决策：与 PersonMemory.supervisionDecision 同语义，阅历控制台/RPC 读这个字段。 */
+  readonly supervisionDecision: SupervisionDecision
 }
 
 /** 一条视觉记忆（场景时间线：同一画面持续期间合并为一条）。 */
@@ -267,14 +277,14 @@ export class PersonBrain {
     const safeImportance = Math.max(1, Math.min(5, Math.trunc(importance) || 1))
     // 永久去重：完全相同的记忆只保留一条（重要性取 max，刷新时间）。
     const existing = this.db.prepare(
-      'SELECT id, kind, content, importance, created_at, needs_review FROM memories WHERE content = ? ORDER BY id DESC LIMIT 1',
+      'SELECT id, kind, content, importance, created_at, needs_review, supervision_decision FROM memories WHERE content = ? ORDER BY id DESC LIMIT 1',
     ).get(content)
     if (existing !== undefined) {
       const row = existing as { id: number; kind: string; content: string; importance: number; created_at: string; needs_review: number }
       if (safeImportance > row.importance || source !== 'user' || effectiveNeedsReview) {
         this.db.prepare('UPDATE memories SET importance = ?, source = ?, topic = ?, created_at = ?, needs_review = ?, supervision_decision = ? WHERE id = ?')
           .run(Math.max(row.importance, safeImportance), source, topic, createdAt, effectiveNeedsReview ? 1 : row.needs_review, supervisionDecision, row.id)
-        return toMemory({ ...row, importance: Math.max(row.importance, safeImportance), source, topic, created_at: createdAt, needs_review: effectiveNeedsReview ? 1 : row.needs_review })
+        return toMemory({ ...row, importance: Math.max(row.importance, safeImportance), source, topic, created_at: createdAt, needs_review: effectiveNeedsReview ? 1 : row.needs_review, supervision_decision: supervisionDecision })
       }
       return toMemory(row)
     }
@@ -286,7 +296,7 @@ export class PersonBrain {
       const mergedImportance = Math.max(similar.importance, safeImportance)
       this.db.prepare('UPDATE memories SET content = ?, importance = ?, source = ?, topic = ?, created_at = ?, needs_review = ?, supervision_decision = ? WHERE id = ?')
         .run(keep, mergedImportance, source, topic, createdAt, effectiveNeedsReview ? 1 : similar.needsReview ? 1 : 0, supervisionDecision, similar.id)
-      return toMemory({ id: similar.id, kind, content: keep, importance: mergedImportance, source, topic, createdAt, needs_review: effectiveNeedsReview ? 1 : similar.needsReview ? 1 : 0 })
+      return toMemory({ id: similar.id, kind, content: keep, importance: mergedImportance, source, topic, createdAt, needs_review: effectiveNeedsReview ? 1 : similar.needsReview ? 1 : 0, supervision_decision: supervisionDecision })
     }
     const result = this.db.prepare(
       'INSERT INTO memories (kind, content, importance, created_at, source, topic, needs_review, supervision_decision) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
@@ -300,6 +310,7 @@ export class PersonBrain {
       topic,
       createdAt,
       needsReview,
+      supervisionDecision,
     }
   }
 
@@ -316,8 +327,8 @@ export class PersonBrain {
     if (clean === '') return undefined
     const cleanTokens = topicTokens(clean)
     const rows = this.db.prepare(
-      'SELECT id, content, importance, needs_review FROM memories ORDER BY importance DESC, id ASC LIMIT 200',
-    ).all() as Array<{ id: number; content: string; importance: number; needs_review: number }>
+      'SELECT id, content, importance, needs_review, supervision_decision FROM memories ORDER BY importance DESC, id ASC LIMIT 200',
+    ).all() as Array<{ id: number; content: string; importance: number; needs_review: number; supervision_decision?: string }>
     for (const row of rows) {
       const other = normalizeMemoryText(row.content)
       if (other === '') continue
@@ -354,8 +365,8 @@ export class PersonBrain {
     this.assertOpen()
     const safeLimit = Math.max(1, Math.min(50, Math.trunc(limit) || 8))
     const sql = query.trim() === ''
-      ? 'SELECT id, kind, content, importance, source, topic, created_at, needs_review FROM memories WHERE needs_review = 0 ORDER BY importance DESC, created_at DESC LIMIT ?'
-      : 'SELECT id, kind, content, importance, source, topic, created_at, needs_review FROM memories WHERE needs_review = 0 AND content LIKE ? ORDER BY importance DESC, created_at DESC LIMIT ?'
+      ? 'SELECT id, kind, content, importance, source, topic, created_at, needs_review, supervision_decision FROM memories WHERE needs_review = 0 ORDER BY importance DESC, created_at DESC LIMIT ?'
+      : 'SELECT id, kind, content, importance, source, topic, created_at, needs_review, supervision_decision FROM memories WHERE needs_review = 0 AND content LIKE ? ORDER BY importance DESC, created_at DESC LIMIT ?'
     const rows = query.trim() === ''
       ? this.db.prepare(sql).all(safeLimit)
       : this.db.prepare(sql).all(`%${escapeLike(query)}%`, safeLimit)
@@ -370,7 +381,24 @@ export class PersonBrain {
     this.assertOpen()
     const safeLimit = Math.max(1, Math.min(500, Math.trunc(limit) || 200))
     const rows = this.db.prepare(
-      'SELECT id, kind, content, importance, source, topic, created_at, needs_review FROM memories WHERE needs_review = 1 ORDER BY created_at DESC LIMIT ?',
+      'SELECT id, kind, content, importance, source, topic, created_at, needs_review, supervision_decision FROM memories WHERE needs_review = 1 ORDER BY created_at DESC LIMIT ?',
+    ).all(safeLimit) as Array<Record<string, unknown>>
+    return rows.map(toMemory)
+  }
+
+  /**
+   * 列出"监督者标了 flag-review"或"deny 留下的痕迹"的记忆行——审计入口。
+   *
+   * 与 `recallPendingMemories` 的差异：
+   * - recallPendingMemories 读 `needs_review=1`（低置信度标记，自动除幻觉扫描写）
+   * - listFlagged 读 `supervision_decision IN ('flag-review', 'deny')`（监督者决策痕迹）
+   * 两条独立——同一行可能同时为 `needs_review=1` AND `supervision_decision='flag-review'`。
+   */
+  listFlagged(limit = 100): PersonMemory[] {
+    this.assertOpen()
+    const safeLimit = Math.max(1, Math.min(500, Math.trunc(limit) || 100))
+    const rows = this.db.prepare(
+      "SELECT id, kind, content, importance, source, topic, created_at, needs_review, supervision_decision FROM memories WHERE supervision_decision IN ('flag-review', 'deny') ORDER BY created_at DESC LIMIT ?",
     ).all(safeLimit) as Array<Record<string, unknown>>
     return rows.map(toMemory)
   }
@@ -387,8 +415,8 @@ export class PersonBrain {
     let removed = 0
     let flagged = 0
     const rows = this.db.prepare(
-      'SELECT id, content, source, needs_review FROM memories',
-    ).all() as Array<{ id: number; content: string; source: string; needs_review: number }>
+      'SELECT id, content, source, needs_review, supervision_decision FROM memories',
+    ).all() as Array<{ id: number; content: string; source: string; needs_review: number; supervision_decision?: string }>
     for (const row of rows) {
       const content = row.content.trim()
       if (content === '') {
@@ -540,7 +568,7 @@ export class PersonBrain {
     const cleanFilter = tagFilter.trim()
     const cleanSource = sourceFilter.trim()
     let rows: Array<Record<string, unknown>>
-    const baseSelect = 'SELECT topic, content, tags, status, suggested_skill, source, updated_at, needs_review FROM knowledge'
+    const baseSelect = 'SELECT topic, content, tags, status, suggested_skill, source, updated_at, needs_review, supervision_decision FROM knowledge'
     if (topic.trim() !== '') {
       rows = this.db.prepare(baseSelect + ' WHERE topic = ?').all(topic.trim())
     } else if (cleanFilter !== '') {
@@ -566,11 +594,11 @@ export class PersonBrain {
     const safeLimit = Math.max(1, Math.min(500, Math.trunc(limit) || 100))
     const rows = status.trim() === ''
       ? this.db.prepare(
-        'SELECT topic, content, tags, status, suggested_skill, source, updated_at, needs_review FROM knowledge '
+        'SELECT topic, content, tags, status, suggested_skill, source, updated_at, needs_review, supervision_decision FROM knowledge '
         + 'WHERE tags LIKE ? ORDER BY updated_at DESC LIMIT ?',
       ).all('%实操%', safeLimit)
       : this.db.prepare(
-        'SELECT topic, content, tags, status, suggested_skill, source, updated_at, needs_review FROM knowledge '
+        'SELECT topic, content, tags, status, suggested_skill, source, updated_at, needs_review, supervision_decision FROM knowledge '
         + 'WHERE tags LIKE ? AND status = ? ORDER BY updated_at DESC LIMIT ?',
       ).all('%实操%', status.trim(), safeLimit)
     return rows.map(toKnowledge)
@@ -588,7 +616,7 @@ export class PersonBrain {
     const safeLimit = Math.max(1, Math.min(1000, Math.trunc(limit) || 300))
     const cleanStatus = status.trim()
     const cleanSource = source.trim()
-    let sql = 'SELECT topic, content, tags, status, suggested_skill, source, updated_at, needs_review FROM knowledge'
+    let sql = 'SELECT topic, content, tags, status, suggested_skill, source, updated_at, needs_review, supervision_decision FROM knowledge'
     const conds: string[] = []
     const values: Array<string | number> = []
     if (cleanStatus !== '') { conds.push('status = ?'); values.push(cleanStatus) }
@@ -930,6 +958,7 @@ function toMemory(row: Record<string, unknown>): PersonMemory {
     topic: String(row.topic ?? ''),
     createdAt: String(row.created_at),
     needsReview: Number(row.needs_review ?? 0) !== 0,
+    supervisionDecision: normalizeSupervision(row.supervision_decision),
   }
 }
 
@@ -944,7 +973,14 @@ function toKnowledge(row: Record<string, unknown>): PersonKnowledge {
     source: String(row.source ?? 'video'),
     updatedAt: String(row.updated_at),
     needsReview: Number(row.needs_review ?? 0) !== 0,
+    supervisionDecision: normalizeSupervision(row.supervision_decision),
   }
+}
+
+/** 防御性归一：旧库缺列时 SQLite 会拿不到该字段——给个 'allow' 兜底，绝不抛错。 */
+function normalizeSupervision(raw: unknown): SupervisionDecision {
+  if (raw === 'allow' || raw === 'flag-review' || raw === 'deny') return raw
+  return 'allow'
 }
 
 /** 主题归一化：去掉「对话：/实操：/知识：」等前缀，仅用于相似度比较。 */

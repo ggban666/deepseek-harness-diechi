@@ -7,6 +7,8 @@ export interface BrainPracticeItem {
   readonly status: string
   readonly suggestedSkill: string
   readonly updatedAt: string
+  readonly needsReview: boolean
+  readonly supervisionDecision: 'allow' | 'flag-review' | 'deny'
 }
 
 export interface BrainInboxSnapshot {

@@ -36,6 +36,28 @@ function StatusBadge({ item, t }: { item: BrainPracticeItem; t: PropsLocale<'die
   )
 }
 
+const SUPERVISION_LABEL: Record<'flag-review' | 'deny', (t: PropsLocale<'diechiBrain'>['t']) => string> = {
+  'flag-review': t => String(t('supervisionFlagged')),
+  'deny': t => String(t('supervisionDenied')),
+}
+
+/**
+ * 监督者决策徽标——区分于业务侧 status 徽标。
+ * 仅当 supervisionDecision 不是 'allow' 时显示；'allow' 不打扰用户。
+ */
+function SupervisionBadge({ item, t }: { item: BrainPracticeItem; t: PropsLocale<'diechiBrain'>['t'] }) {
+  if (item.supervisionDecision === 'allow') return null
+  const text = SUPERVISION_LABEL[item.supervisionDecision](t)
+  return (
+    <span
+      className={item.supervisionDecision === 'deny' ? css.badgeSupervisionDeny : css.badgeSupervisionFlagged}
+      title={String(t('supervisionTooltip'))}
+    >
+      {text}
+    </span>
+  )
+}
+
 /** 一张收件箱卡片。 */
 function PracticeCard({
   item, skills, writable, t, onAssign, onSetTags, onRemove,
@@ -71,6 +93,7 @@ function PracticeCard({
         <div className={css.cardTitle}>
           <span className={css.topic}>{item.topic}</span>
           <StatusBadge item={item} t={t} />
+          <SupervisionBadge item={item} t={t} />
           <span className={css.updated}>{item.updatedAt.slice(0, 16).replace('T', ' ')}</span>
         </div>
         <button type="button" className={css.ghost} onClick={() => { setExpanded(value => !value) }}>

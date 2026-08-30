@@ -93,9 +93,12 @@ export class BrainGateway extends TypertRemoteService {
   private brain: PersonBrain | undefined
   /** 本会话已入库的视频（按 at 时间戳去重）。 */
   private readonly ingested = new Set<string>()
+  /** 保存 ctx 供惰性 open globalBrain 时 attach supervisor（基类不存 ctx 引用）。 */
+  private readonly ctxRef: Context
 
   constructor(ctx: Context) {
     super(ctx, 'diechiBrain')
+    this.ctxRef = ctx
     // 卸载/热重载时释放 brain.db 句柄并退订视觉流，避免 watcher 泄漏。
     ctx.effect(() => {
       const dispose = ctx.skillVision?.watch((next) => {
@@ -130,6 +133,15 @@ export class BrainGateway extends TypertRemoteService {
   private globalBrain(): PersonBrain {
     if (this.brain === undefined) {
       this.brain = PersonBrain.openGlobal()
+      // 三架构基座保护：把全局大脑接入 ctx.supervision（若有），
+      // 否则 learn/remember/seeScene 在缺监督者时抛 SupervisionMissingError。
+      // 生产由 dsh-host-diechi-supervisor 提供；测试注入 stub。
+      const supervision = this.ctxRef.get('supervision') as
+        | { attachBrain?(brain: { setSupervisionContext(ctx: unknown): void }): void }
+        | undefined
+      if (supervision?.attachBrain !== undefined) {
+        supervision.attachBrain(this.brain)
+      }
       console.log('[diechi-brain] 全局大脑已打开 →', this.brain.path)
     }
     return this.brain
@@ -192,6 +204,7 @@ export class BrainGateway extends TypertRemoteService {
             source: m.source,
             updatedAt: m.createdAt,
             needsReview: false,
+            supervisionDecision: m.supervisionDecision,
           })
         }
         // 场景：只展示有信息量的，且内容高度相似的聚合成一条（代表内容 + 次数），
@@ -229,6 +242,7 @@ export class BrainGateway extends TypertRemoteService {
             source: 'video',
             updatedAt: group.latest,
             needsReview: false,
+            supervisionDecision: 'allow',
           })
         }
         if (hiddenScenes > 0) {
@@ -241,6 +255,7 @@ export class BrainGateway extends TypertRemoteService {
             source: 'video',
             updatedAt: shownScenes[0]?.latest ?? '',
             needsReview: false,
+            supervisionDecision: 'allow',
           })
         }
       } finally {
@@ -287,6 +302,13 @@ export class BrainGateway extends TypertRemoteService {
     if (row === undefined) return { ok: false, error: 'not-found' }
     try {
       const personBrain = PersonBrain.open(join(dshHomeDir(), 'persons', skillId))
+      // 三架构基座保护：person brain 写入也走 gateWrite —— attach ctx.supervision
+      const supervision = this.ctxRef.get('supervision') as
+        | { attachBrain?(brain: { setSupervisionContext(ctx: unknown): void }): void }
+        | undefined
+      if (supervision?.attachBrain !== undefined) {
+        supervision.attachBrain(personBrain)
+      }
       personBrain.learn(row.topic, row.content, row.tags || PRACTICE_TAG, row.source || 'video')
       personBrain.close()
     } catch (error) {
@@ -763,6 +785,7 @@ function toPracticeItem(row: PersonKnowledge): BrainPracticeItem {
     source: row.source,
     updatedAt: row.updatedAt,
     needsReview: row.needsReview,
+    supervisionDecision: row.supervisionDecision,
   }
 }
 

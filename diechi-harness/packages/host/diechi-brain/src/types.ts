@@ -18,6 +18,13 @@ export interface BrainPracticeItem {
   readonly updatedAt: string
   /** 待人工确认：低置信度归纳先打标记，确认（confirm RPC）后才参与归位与注入。 */
   readonly needsReview: boolean
+  /**
+   * 监督者写入决策：'allow' | 'flag-review' | 'deny'。
+   * flag-review：行已落库但 needs_review=1，等用户确认；
+   * deny：通常不会到这里（已抛 SupervisionDeniedError），但 tool 调试时可能留痕。
+   * UI / 阅历控制台读这个字段显示"待审"或"已被监督者标了"标记。
+   */
+  readonly supervisionDecision: 'allow' | 'flag-review' | 'deny'
 }
 
 /** 收件箱快照。 */

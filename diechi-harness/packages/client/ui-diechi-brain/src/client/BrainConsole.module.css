@@ -209,6 +209,25 @@
   border: 1px solid var(--dsw-alias-border-l2);
 }
 
+.badgeSupervisionFlagged,
+.badgeSupervisionDeny {
+  font-size: 11px;
+  line-height: 1;
+  padding: 3px 7px;
+  border-radius: 999px;
+  margin-left: 4px;
+  border: 1px solid currentColor;
+  cursor: help;
+}
+
+.badgeSupervisionFlagged {
+  color: var(--dsw-alias-state-warn, #c08400);
+}
+
+.badgeSupervisionDeny {
+  color: var(--dsw-alias-state-danger, #c0392b);
+}
+
 .ok {
   margin: 0;
   font-size: 12px;
