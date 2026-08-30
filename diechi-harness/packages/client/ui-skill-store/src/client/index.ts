@@ -52,6 +52,10 @@ import {
   type SkillManifestEntry, type SkillMarketSettings, type SkillStoreSettings,
   type SkillTrainingSettings, type TrainingState, IDLE_TRAINING,
 } from './skill-format.ts'
+import {
+  beginVisionCall, readVisionStream, visionEndpoint, visionFailure,
+  VISION_DEFAULT_ENDPOINT, VISION_DEFAULT_MODEL, VISION_TIMEOUT,
+} from './vision-call.ts'
 
 export type {
   ImportResult, RecognitionResult,
@@ -111,15 +115,6 @@ const NS = 'skill-store'
 
 /** Required services: the slot registry, the section copy, and the settings scope. */
 export const inject = ['slots', 'locale', 'settingsScope']
-
-/** Default local vision endpoint: the diechi vision+tts service (OpenAI-compatible). */
-const VISION_DEFAULT_ENDPOINT = 'http://127.0.0.1:8080'
-/** Default model name served by the llama.cpp endpoint. */
-const VISION_DEFAULT_MODEL = 'MiniCPM-V-4.6'
-/** Abort a recognition request after this long; CPU prompt eval is slow. */
-const VISION_TIMEOUT_MS = 120_000
-/** Video uploads can be long camera clips; give the server room to decode + transcribe. */
-const VIDEO_TIMEOUT_MS = 600_000
 
 /** Default TTS provider: the diechi vision+tts service on 8080. */
 const VOICE_DEFAULT_PROVIDER: VoiceState['provider'] = 'local'
@@ -549,7 +544,7 @@ class SkillStoreController {
   async setVisionModel(model: string): Promise<void> {
     const config = this.visionScope.getSnapshot().value
     if (config?.enabled !== true) return
-    const endpoint = (config.endpoint || VISION_DEFAULT_ENDPOINT).replace(/\/+$/, '')
+    const endpoint = visionEndpoint(config)
     const response = await fetch(`${endpoint}/api/v1/vision/model`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -636,19 +631,15 @@ class SkillStoreController {
    * @returns the model's description, or an error code for the section copy.
    */
   async runRecognition(image: RecognitionImage): Promise<RecognitionResult> {
-    const config = this.visionScope.getSnapshot().value
-    if (config?.enabled !== true) return { ok: false, error: 'vision-disabled' }
-    const endpoint = (config.endpoint || VISION_DEFAULT_ENDPOINT).replace(/\/+$/, '')
-    const model = config.model || VISION_DEFAULT_MODEL
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), VISION_TIMEOUT_MS)
+    const call = beginVisionCall(this.visionScope.getSnapshot().value, VISION_TIMEOUT.recognize)
+    if (call === undefined) return { ok: false, error: 'vision-disabled' }
     try {
-      const response = await fetch(`${endpoint}/v1/chat/completions`, {
+      const response = await fetch(`${call.endpoint}/v1/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        signal: controller.signal,
+        signal: call.signal,
         body: JSON.stringify({
-          model,
+          model: call.model,
           messages: [{
             role: 'user',
             content: [
@@ -677,12 +668,9 @@ class SkillStoreController {
         ? { ok: true, notice: content }
         : { ok: true, notice: content, draft }
     } catch (error) {
-      if (error instanceof DOMException && error.name === 'AbortError') {
-        return { ok: false, error: 'vision-timeout' }
-      }
-      return { ok: false, error: 'vision-network' }
+      return { ok: false, error: visionFailure(error) }
     } finally {
-      clearTimeout(timer)
+      call.release()
     }
   }
 
@@ -694,18 +682,15 @@ class SkillStoreController {
    * @returns the model's description and optional structured draft.
    */
   async runVideoRecognition(file: File): Promise<RecognitionResult> {
-    const config = this.visionScope.getSnapshot().value
-    if (config?.enabled !== true) return { ok: false, error: 'vision-disabled' }
-    const endpoint = (config.endpoint || VISION_DEFAULT_ENDPOINT).replace(/\/+$/, '')
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), VIDEO_TIMEOUT_MS)
+    const call = beginVisionCall(this.visionScope.getSnapshot().value, VISION_TIMEOUT.video)
+    if (call === undefined) return { ok: false, error: 'vision-disabled' }
     try {
       const form = new FormData()
       form.append('file', file, file.name)
-      const response = await fetch(`${endpoint}/api/v1/video/describe`, {
+      const response = await fetch(`${call.endpoint}/api/v1/video/describe`, {
         method: 'POST',
         body: form,
-        signal: controller.signal,
+        signal: call.signal,
       })
       if (!response.ok) return { ok: false, error: `vision-http:${response.status}` }
       const payload = await response.json() as {
@@ -734,12 +719,9 @@ class SkillStoreController {
         ? { ok: true, notice: content, ...transcriptExtra, ...processExtra }
         : { ok: true, notice: content, draft, ...transcriptExtra, ...processExtra }
     } catch (error) {
-      if (error instanceof DOMException && error.name === 'AbortError') {
-        return { ok: false, error: 'vision-timeout' }
-      }
-      return { ok: false, error: 'vision-network' }
+      return { ok: false, error: visionFailure(error) }
     } finally {
-      clearTimeout(timer)
+      call.release()
     }
   }
 
@@ -752,19 +734,15 @@ class SkillStoreController {
    * @returns a one-sentence description, or undefined when unavailable.
    */
   async runLiveFrame(frame: string): Promise<string | undefined> {
-    const config = this.visionScope.getSnapshot().value
-    if (config?.enabled !== true) return undefined
-    const endpoint = (config.endpoint || VISION_DEFAULT_ENDPOINT).replace(/\/+$/, '')
-    const model = config.model || VISION_DEFAULT_MODEL
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), 20_000)
+    const call = beginVisionCall(this.visionScope.getSnapshot().value, VISION_TIMEOUT.liveFrame)
+    if (call === undefined) return undefined
     try {
-      const response = await fetch(`${endpoint}/v1/chat/completions`, {
+      const response = await fetch(`${call.endpoint}/v1/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        signal: controller.signal,
+        signal: call.signal,
         body: JSON.stringify({
-          model,
+          model: call.model,
           messages: [{
             role: 'user',
             content: [
@@ -785,7 +763,7 @@ class SkillStoreController {
     } catch {
       return undefined
     } finally {
-      clearTimeout(timer)
+      call.release()
     }
   }
 
@@ -798,23 +776,19 @@ class SkillStoreController {
    * @returns a short caption, or undefined when unavailable.
    */
   async runLiveChatFrame(frame: string, history: readonly CameraChatTurn[]): Promise<string | undefined> {
-    const config = this.visionScope.getSnapshot().value
-    if (config?.enabled !== true) return undefined
-    const endpoint = (config.endpoint || VISION_DEFAULT_ENDPOINT).replace(/\/+$/, '')
-    const model = config.model || VISION_DEFAULT_MODEL
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), 20_000)
+    const call = beginVisionCall(this.visionScope.getSnapshot().value, VISION_TIMEOUT.liveFrame)
+    if (call === undefined) return undefined
     try {
       const historyMessages = history.map(turn => ({
         role: turn.role,
         content: [{ type: 'text', text: turn.content }],
       }))
-      const response = await fetch(`${endpoint}/v1/chat/completions`, {
+      const response = await fetch(`${call.endpoint}/v1/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        signal: controller.signal,
+        signal: call.signal,
         body: JSON.stringify({
-          model,
+          model: call.model,
           messages: [
             {
               role: 'system',
@@ -842,7 +816,7 @@ class SkillStoreController {
     } catch {
       return undefined
     } finally {
-      clearTimeout(timer)
+      call.release()
     }
   }
 
@@ -854,7 +828,9 @@ class SkillStoreController {
   async startVisionSession(): Promise<string | undefined> {
     const config = this.visionScope.getSnapshot().value
     if (config?.enabled !== true) return undefined
-    const endpoint = (config.endpoint || VISION_DEFAULT_ENDPOINT).replace(/\/+$/, '')
+    // 注意：会话创建原本就没有超时保护，本次重构保持原行为不改。
+    // 若要补 `VISION_TIMEOUT` 档位，需单独评估（创建失败会连带整轮摄像头对话起不来）。
+    const endpoint = visionEndpoint(config)
     try {
       const ctx = await this.buildVisionSkillContext()
       const response = await fetch(`${endpoint}/api/v1/vision/session`, {
@@ -898,8 +874,7 @@ class SkillStoreController {
 
   async endVisionSession(sid: string): Promise<void> {
     if (!sid) return
-    const config = this.visionScope.getSnapshot().value
-    const endpoint = (config?.endpoint || VISION_DEFAULT_ENDPOINT).replace(/\/+$/, '')
+    const endpoint = visionEndpoint(this.visionScope.getSnapshot().value)
     try {
       await fetch(`${endpoint}/api/v1/vision/session/${encodeURIComponent(sid)}`, { method: 'DELETE' })
     } catch { /* ignore */ }
@@ -907,8 +882,7 @@ class SkillStoreController {
 
   async interruptVision(sid: string): Promise<void> {
     if (!sid) return
-    const config = this.visionScope.getSnapshot().value
-    const endpoint = (config?.endpoint || VISION_DEFAULT_ENDPOINT).replace(/\/+$/, '')
+    const endpoint = visionEndpoint(this.visionScope.getSnapshot().value)
     try {
       await fetch(`${endpoint}/api/v1/vision/session/${encodeURIComponent(sid)}/interrupt`, { method: 'POST' })
     } catch { /* ignore */ }
@@ -930,58 +904,28 @@ class SkillStoreController {
     onDelta?: (delta: string) => void
   }): Promise<string> {
     const { sid, frame = '', text = '', reason = 'speech', persona, memory, signal, onDelta } = args
-    const config = this.visionScope.getSnapshot().value
-    if (config?.enabled !== true) return ''
-    const endpoint = (config.endpoint || VISION_DEFAULT_ENDPOINT).replace(/\/+$/, '')
-    const controller = new AbortController()
-    const onOuterAbort = (): void => { controller.abort() }
-    signal?.addEventListener('abort', onOuterAbort, { once: true })
-    const timer = setTimeout(() => controller.abort(), 90_000)
-    let full = ''
+    const call = beginVisionCall(this.visionScope.getSnapshot().value, VISION_TIMEOUT.streamTurn, signal)
+    if (call === undefined) return ''
     try {
       const body: Record<string, string | number> = {
         session_id: sid, frame, text, reason, max_tokens: 256, temperature: 0.4,
       }
       if (persona !== undefined && persona !== '') body.persona = persona
       if (memory !== undefined && memory !== '') body.memory = memory
-      const response = await fetch(`${endpoint}/api/v1/vision/stream`, {
+      const response = await fetch(`${call.endpoint}/api/v1/vision/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        signal: controller.signal,
+        signal: call.signal,
         body: JSON.stringify(body),
       })
       if (!response.ok || response.body === null) return ''
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder('utf-8')
-      let buffer = ''
-      for (;;) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-        let idx = buffer.indexOf('\n\n')
-        while (idx >= 0) {
-          const block = buffer.slice(0, idx)
-          buffer = buffer.slice(idx + 2)
-          for (const line of block.split('\n')) {
-            if (!line.startsWith('data: ')) continue
-            try {
-              const ev = JSON.parse(line.slice(6)) as { type?: string; delta?: string }
-              if (ev.type === 'delta' && typeof ev.delta === 'string') {
-                full += ev.delta
-                onDelta?.(ev.delta)
-              }
-            } catch { /* skip malformed event */ }
-          }
-          idx = buffer.indexOf('\n\n')
-        }
-      }
+      // 读流失败时返回已收到的部分文本（见 readVisionStream 契约），故此处 catch 只兜 fetch 异常。
+      return await readVisionStream(response.body, onDelta)
     } catch {
-      return full
+      return ''
     } finally {
-      clearTimeout(timer)
-      signal?.removeEventListener('abort', onOuterAbort)
+      call.release()
     }
-    return full
   }
 
   async runLiveChatFrameStream(frame: string, text: string, onDelta: (delta: string) => void, reason = 'speech'): Promise<string> {
@@ -1032,14 +976,14 @@ class SkillStoreController {
     }
     const sid = this.visionSessionId
     if (sid === '') return {}
-    const endpoint = (config.endpoint || VISION_DEFAULT_ENDPOINT).replace(/\/+$/, '')
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), 5_000)
+    // 会话就绪后才开始计时：创建会话本身不受这 5s 预算约束（本次重构保持原行为）。
+    const call = beginVisionCall(config, VISION_TIMEOUT.observe)
+    if (call === undefined) return {}
     try {
-      const response = await fetch(`${endpoint}/api/v1/vision/session/${sid}/observe`, {
+      const response = await fetch(`${call.endpoint}/api/v1/vision/session/${sid}/observe`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        signal: controller.signal,
+        signal: call.signal,
         body: JSON.stringify({ frame, diff }),
       })
       if (!response.ok) return {}
@@ -1048,7 +992,7 @@ class SkillStoreController {
     } catch {
       return {} // 静默：视觉服务未就绪时保持预览可用，下一帧重试。
     } finally {
-      clearTimeout(timer)
+      call.release()
     }
   }
 

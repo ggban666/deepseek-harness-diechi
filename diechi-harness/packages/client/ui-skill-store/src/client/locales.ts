@@ -41,6 +41,7 @@ export type SkillStoreKey =
   | 'trainingFinishPromptRetrain' | 'trainingFinishPromptCreate'
   | 'centerTitle' | 'close' | 'tabMarket' | 'tabWorkshop'
   | 'marketIntro' | 'marketDir' | 'marketEmpty' | 'marketRefresh' | 'marketRefreshed'
+  | 'marketRefreshFailed'
   | 'install' | 'installed' | 'installedBadge' | 'installOk' | 'installFailed' | 'reinstallHint'
   | 'workshopIntro' | 'workshopInstalledHint' | 'workshopConversationTitle' | 'workshopConversationHint' | 'workshopFocusHint'
   | 'createTitle' | 'createHint' | 'createName' | 'createNamePlaceholder' | 'createDescription' | 'createDescriptionPlaceholder' | 'createAdvanced'
@@ -63,7 +64,7 @@ export type SkillStoreKey =
   | 'voiceInput' | 'voiceInputTitle' | 'voiceInputBusy' | 'voiceInputUnsupported' | 'voiceInputDenied' | 'voiceInputFailed' | 'voiceInputEmpty'
   | 'navChat' | 'navSkills' | 'navExperiences' | 'navLabel'
   | 'wallTitle' | 'wallSubtitle' | 'wallEnabledCount' | 'wallManage' | 'wallNoDesc' | 'wallWhen'
-  | 'wallMemories' | 'wallKnowledge' | 'wallPractice' | 'wallScenes' | 'wallLastActive' | 'wallNeverActive'
+  | 'wallMemories' | 'wallKnowledge' | 'wallPractice' | 'wallScenes' | 'wallTotal' | 'wallLastActive' | 'wallNeverActive'
   | 'wallIdentityOn' | 'wallIdentityOff' | 'wallEnabled' | 'wallDisabled'
   | 'expStatusTitle' | 'expPendingCount' | 'expStatusEmpty' | 'expTimelineTitle' | 'expRefresh' | 'expTimelineEmpty'
   | 'expSuggest' | 'expAssign' | 'expRemove' | 'expAssignedOk' | 'expAssignedFail' | 'expRemovedOk' | 'expRemovedFail'
@@ -72,6 +73,7 @@ export type SkillStoreKey =
   | 'expSourceConversation' | 'expSourceVideo' | 'expSourceWeb' | 'expSourceUser'
   | 'expNewSkillTitle' | 'expNewSkillHint' | 'expNewSkillCount' | 'expNewSkillCreate'
    | 'graphTitle' | 'graphBack' | 'graphNodes' | 'graphEdges' | 'graphSource' | 'graphGlobal' | 'graphRotateHint' | 'graphZoomIn' | 'graphZoomOut' | 'graphReset' | 'graphSearchPlaceholder' | 'graphAll'
+   | 'graphTypeKnowledge' | 'graphTypeMemory' | 'graphTypeScene'
    | 'expGraph' | 'expGraphGlobal'
   | 'memPendingTitle' | 'memPendingCount' | 'memPendingHint' | 'memPendingReason' | 'memConfirm' | 'memDelete' | 'memConfirmedOk' | 'memRemovedOk' | 'memActionFail'
 
@@ -231,6 +233,7 @@ export const en: Record<SkillStoreKey, string> = {
   marketEmpty: 'No installable skills yet. Drop a SKILL.md or JSON manifest into skill-market/, then ask the assistant to "refresh the Pingquan skill store" (or restart the app).',
   marketRefresh: 'Refresh',
   marketRefreshed: 'Store refreshed.',
+  marketRefreshFailed: 'Failed to refresh the store.',
   install: 'Install',
   installedBadge: 'Installed',
   installOk: 'Installed {id}.',
@@ -335,6 +338,7 @@ export const en: Record<SkillStoreKey, string> = {
   wallKnowledge: 'Knowledge',
   wallPractice: 'Practice',
   wallScenes: 'Scenes',
+  wallTotal: 'Experience',
   wallLastActive: 'Last active {at}',
   wallNeverActive: 'Never used',
   wallIdentityOn: 'In use',
@@ -379,12 +383,15 @@ export const en: Record<SkillStoreKey, string> = {
   graphGlobal: 'Global Brain',
   expGraph: 'Graph',
   expGraphGlobal: 'Global Graph',
-  graphRotateHint: 'Drag to rotate · Wheel to zoom · Click a node to pin details',
+  graphRotateHint: 'Drag to rotate · Wheel to zoom · Click a node to focus · Drag a node to nudge',
   graphZoomIn: 'Zoom in',
   graphZoomOut: 'Zoom out',
   graphReset: 'Reset view',
   graphSearchPlaceholder: 'Search knowledge…',
   graphAll: 'All',
+  graphTypeKnowledge: 'Knowledge',
+  graphTypeMemory: 'Memory',
+  graphTypeScene: 'Practice',
   memPendingTitle: 'Memories awaiting review',
   memPendingCount: '{n} pending',
   memPendingHint: 'Auto-flagged as suspicious or low-confidence by the brain. Confirm to use them, or delete.',
@@ -552,6 +559,7 @@ export const zh: Record<SkillStoreKey, string> = {
   marketEmpty: '平权技能商店里还没有可安装的技能。把 SKILL.md 或 JSON 放进 skill-market/ 后，告诉助手「刷新平权技能商店」，或重启应用。',
   marketRefresh: '刷新',
   marketRefreshed: '商店已刷新。',
+  marketRefreshFailed: '商店刷新失败。',
   install: '安装',
   installedBadge: '已安装',
   installOk: '已安装 {id}。',
@@ -656,6 +664,7 @@ export const zh: Record<SkillStoreKey, string> = {
   wallKnowledge: '知识',
   wallPractice: '实操',
   wallScenes: '场景',
+  wallTotal: '阅历',
   wallLastActive: '最近活动 {at}',
   wallNeverActive: '从未使用',
   wallIdentityOn: '对话中',
@@ -700,12 +709,15 @@ export const zh: Record<SkillStoreKey, string> = {
   graphGlobal: '全局大脑',
   expGraph: '图谱',
   expGraphGlobal: '全局图谱',
-  graphRotateHint: '拖拽旋转 · 滚轮缩放 · 点击节点固定详情',
+  graphRotateHint: '拖拽旋转 · 滚轮缩放 · 点击节点聚焦 · 拖动节点微调',
   graphZoomIn: '放大',
   graphZoomOut: '缩小',
   graphReset: '复位视角',
   graphSearchPlaceholder: '搜索知识…',
   graphAll: '全部',
+  graphTypeKnowledge: '知识',
+  graphTypeMemory: '记忆',
+  graphTypeScene: '实操',
   memPendingTitle: '待确认记忆',
   memPendingCount: '{n} 条待处理',
   memPendingHint: '主脑自动标记为疑似幻觉或低置信度的记忆。确认后生效参与注入，或直接删除。',

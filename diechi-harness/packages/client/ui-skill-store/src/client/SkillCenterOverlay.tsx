@@ -10,7 +10,7 @@ import type {
   HostObservable, InjectFace, PropsLocale, PropsRuntime,
 } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SkillStoreKey } from './locales.ts'
-import type { SkillManifestEntry, SkillMarketSkill, TrainingState } from './skill-format.ts'
+import type { SkillManifestEntry, TrainingState } from './skill-format.ts'
 import type { BrainPendingMemory, BrainPracticeItem, SkillOverviewSnapshot, BrainGraphSnapshot } from '@deepseek-ai/dsh-api-remotes/types'
 import type { SkillStoreState } from './SkillStoreSection.tsx'
 import {
@@ -20,7 +20,12 @@ import {
 import { SkillCardWall } from './SkillCardWall.tsx'
 import { ExperiencesWall } from './ExperiencesWall.tsx'
 import { KnowledgeGraph } from './KnowledgeGraph.tsx'
+import { MarketTab, type MarketState } from './MarketTab.tsx'
+import { useAction } from './use-action.ts'
 import css from './SkillCenterOverlay.module.css'
+
+/** 市场页状态随 MarketTab 组件住在 MarketTab.tsx；这里 re-export 保住既有导入路径。 */
+export type { MarketState }
 
 /** One open surface of the skill center. */
 export type SkillCenterView = 'closed' | 'skills' | 'experiences' | 'market' | 'workshop' | 'graph'
@@ -37,15 +42,6 @@ export interface SkillCenterState {
   readonly createDraft?: SkillDraft
   /** 当前知识图谱视图对应的 skillId；空串表示全局图谱。 */
   readonly graphSkillId?: string
-}
-
-/** Market catalog snapshot the store page renders. */
-export interface MarketState {
-  readonly status: 'loading' | 'ready' | 'unavailable'
-  /** Absolute path of the scanned market directory. */
-  readonly dir: string
-  /** Discoverable skills in the local market. */
-  readonly skills: readonly SkillMarketSkill[]
 }
 
 /** One create-skill request from the workshop form. */
@@ -149,101 +145,7 @@ export type SkillCenterOverlayProps =
   & PropsLocale<'skill-store'>
   & InjectFace<SkillCenterInjected>
 
-type Notice = { readonly kind: 'ok' | 'error' | 'info'; readonly text: string }
-
-/** Render one store tab over the scanned market catalog. */
-function MarketTab({
-  t, market, installedIds, onRefresh, onInstall,
-}: {
-  t: (key: SkillStoreKey) => string
-  market: MarketState
-  installedIds: ReadonlySet<string>
-  onRefresh: () => Promise<void>
-  onInstall: (id: string) => Promise<ImportResult>
-}) {
-  const [busy, setBusy] = useState<string>()
-  const [refreshing, setRefreshing] = useState(false)
-  const [notice, setNotice] = useState<Notice>()
-
-  const handleInstall = async (id: string): Promise<void> => {
-    setBusy(id)
-    try {
-      const result = await onInstall(id)
-      setNotice(result.ok
-        ? { kind: 'ok', text: t('installOk').replace('{id}', id) }
-        : { kind: 'error', text: `${t('installFailed')} ${result.error}` })
-    } catch {
-      setNotice({ kind: 'error', text: t('installFailed') })
-    } finally {
-      setBusy(undefined)
-    }
-  }
-
-  const handleRefresh = async (): Promise<void> => {
-    setRefreshing(true)
-    try {
-      await onRefresh()
-      setNotice({ kind: 'ok', text: t('marketRefreshed') })
-    } finally {
-      setRefreshing(false)
-    }
-  }
-
-  return (
-    <div className={css.tab}>
-      <p className={css.intro}>{t('marketIntro')}</p>
-      <div className={css.dirRow}>
-        <span className={css.dirLabel}>{t('marketDir')}:</span>
-        <code className={css.dir}>{market.dir !== '' ? market.dir : '\u2014'}</code>
-        <button type="button" className={css.ghost} disabled={refreshing} onClick={() => void handleRefresh()}>
-          {t('marketRefresh')}
-        </button>
-      </div>
-      {notice !== undefined && (
-        <p className={notice.kind === 'ok' ? css.ok : css.error} role="status">{notice.text}</p>
-      )}
-      {market.status === 'loading' ? (
-        <p className={css.empty}>{t('pending')}</p>
-      ) : market.skills.length === 0 ? (
-        <p className={css.empty}>{t('marketEmpty')}</p>
-      ) : (
-        <ul className={css.grid}>
-          {market.skills.map(skill => {
-            const isInstalled = installedIds.has(skill.id)
-            return (
-              <li key={skill.id} className={css.marketCard}>
-                <div className={css.marketCardHead}>
-                  <span className={css.marketTitle}>{skill.title}</span>
-                  <span className={css.badge}>{skill.kind === 'vision' ? t('kindVision') : t('kindText')}</span>
-                  <span className={css.badge}>{t('version')} {skill.version}</span>
-                </div>
-                <p className={css.marketDesc}>{skill.description}</p>
-                <div className={css.marketMeta}>
-                  {skill.tags.map(tag => <span key={tag} className={css.tag}>{tag}</span>)}
-                  {skill.author !== undefined && skill.author !== '' && (
-                    <span className={css.author}>{skill.author}</span>
-                  )}
-                </div>
-                <div className={css.marketFoot}>
-                  {isInstalled && <span className={css.installedBadge}>{t('installedBadge')}</span>}
-                  <button
-                    type="button"
-                    className={isInstalled ? css.ghost : css.primary}
-                    disabled={busy === skill.id}
-                    title={isInstalled ? t('reinstallHint') : undefined}
-                    onClick={() => void handleInstall(skill.id)}
-                  >
-                    {busy === skill.id ? t('pending') : t('install')}
-                  </button>
-                </div>
-              </li>
-            )
-          })}
-        </ul>
-      )}
-    </div>
-  )
-}
+type Notice = { readonly kind: 'ok' | 'error'; readonly text: string }
 
 /** Render one installed-skill management row inside the workshop. */
 function InstalledSkillRow({
@@ -262,21 +164,17 @@ function InstalledSkillRow({
   const [open, setOpen] = useState(false)
   const [retraining, setRetraining] = useState(false)
   const [retrainText, setRetrainText] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [notice, setNotice] = useState<Notice>()
+  const { notice, setNotice, run, isBusy } = useAction()
   const pending = skill.content.trim() === ''
   const revisions = [...skill.revisions].reverse()
 
-  const submitRetrain = async (): Promise<void> => {
-    if (busy) return
-    const text = retrainText.trim()
-    setBusy(true)
-    try {
+  const submitRetrain = (): void => {
+    void run('retrain', async () => {
       const result = await onStartTraining({
         mode: 'retrain',
         skillId: skill.id,
         skillTitle: skill.title,
-        description: text,
+        description: retrainText.trim(),
       })
       if (result.ok) {
         setNotice({ kind: 'ok', text: t('trainingStarted') })
@@ -287,11 +185,7 @@ function InstalledSkillRow({
       } else {
         setNotice({ kind: 'error', text: t('trainingStartFailed') })
       }
-    } catch {
-      setNotice({ kind: 'error', text: t('trainingStartFailed') })
-    } finally {
-      setBusy(false)
-    }
+    }, { fail: t('trainingStartFailed') })
   }
 
   const closeRetrain = (): void => {
@@ -345,24 +239,24 @@ function InstalledSkillRow({
             rows={3}
             value={retrainText}
             placeholder={t('retrainPlaceholder')}
-            disabled={busy}
+            disabled={isBusy('retrain')}
             onChange={(event) => setRetrainText(event.target.value)}
           />
           <div className={css.wsActions}>
             <button
               type="button"
               className={css.primary}
-              disabled={busy}
-              onClick={() => { void submitRetrain() }}
+              disabled={isBusy('retrain')}
+              onClick={() => { submitRetrain() }}
             >
-              {busy ? t('pending') : t('retrainGenerate')}
+              {isBusy('retrain') ? t('pending') : t('retrainGenerate')}
             </button>
-            <button type="button" className={css.ghost} disabled={busy} onClick={closeRetrain}>
+            <button type="button" className={css.ghost} disabled={isBusy('retrain')} onClick={closeRetrain}>
               {t('cancel')}
             </button>
           </div>
           {notice !== undefined && (
-            <p className={notice.kind === 'ok' ? css.ok : notice.kind === 'error' ? css.error : css.info} role="status">
+            <p className={notice.kind === 'ok' ? css.ok : css.error} role="status">
               {notice.text}
             </p>
           )}
@@ -436,8 +330,7 @@ export function WorkshopTab({
   const [createReferences, setCreateReferences] = useState('')
   const [installedOpen, setInstalledOpen] = useState(false)
   const [advancedOpen, setAdvancedOpen] = useState(false)
-  const [createBusy, setCreateBusy] = useState(false)
-  const [createNotice, setCreateNotice] = useState<Notice>()
+  const { busy: createBusy, notice: createNotice, setNotice: setCreateNotice, run: runCreate } = useAction()
 
   // Prefill the create form from a recognition draft (Settings → 一键带到工坊).
   useEffect(() => {
@@ -498,10 +391,9 @@ export function WorkshopTab({
     }
   }
 
-  const submitCreate = async (): Promise<void> => {
-    if (createBusy || createDescription.trim() === '') return
-    setCreateBusy(true)
-    try {
+  const submitCreate = (): void => {
+    if (createDescription.trim() === '') return
+    void runCreate('create', async () => {
       const result = await onCreateSkill({
         name: createName.trim(),
         purpose: createDescription.trim(),
@@ -522,11 +414,7 @@ export function WorkshopTab({
       } else {
         setCreateNotice({ kind: 'error', text: t('createFailed') })
       }
-    } catch {
-      setCreateNotice({ kind: 'error', text: t('createFailed') })
-    } finally {
-      setCreateBusy(false)
-    }
+    }, { fail: t('createFailed') })
   }
 
   return (
@@ -576,7 +464,7 @@ export function WorkshopTab({
             rows={2}
             value={createDescription}
             placeholder={t('createDescriptionPlaceholder')}
-            disabled={createBusy}
+            disabled={createBusy !== undefined}
             onChange={(event) => setCreateDescription(event.target.value)}
           />
         </label>
@@ -597,7 +485,7 @@ export function WorkshopTab({
                 className={css.wsInput}
                 value={createName}
                 placeholder={t('createNamePlaceholder')}
-                disabled={createBusy}
+                disabled={createBusy !== undefined}
                 onChange={(event) => setCreateName(event.target.value)}
               />
             </label>
@@ -608,7 +496,7 @@ export function WorkshopTab({
                 rows={3}
                 value={createSteps}
                 placeholder={t('createStepsPlaceholder')}
-                disabled={createBusy}
+                disabled={createBusy !== undefined}
                 onChange={(event) => setCreateSteps(event.target.value)}
               />
             </label>
@@ -619,7 +507,7 @@ export function WorkshopTab({
                 rows={2}
                 value={createRules}
                 placeholder={t('createRulesPlaceholder')}
-                disabled={createBusy}
+                disabled={createBusy !== undefined}
                 onChange={(event) => setCreateRules(event.target.value)}
               />
             </label>
@@ -630,7 +518,7 @@ export function WorkshopTab({
                 rows={3}
                 value={createReferences}
                 placeholder={t('createReferencesPlaceholder')}
-                disabled={createBusy}
+                disabled={createBusy !== undefined}
                 onChange={(event) => setCreateReferences(event.target.value)}
               />
             </label>
@@ -640,14 +528,14 @@ export function WorkshopTab({
           <button
             type="button"
             className={css.primary}
-            disabled={createBusy || createDescription.trim() === ''}
-            onClick={() => { void submitCreate() }}
+            disabled={createBusy !== undefined || createDescription.trim() === ''}
+            onClick={() => { submitCreate() }}
           >
-            {createBusy ? t('pending') : t('createGenerate')}
+            {createBusy !== undefined ? t('pending') : t('createGenerate')}
           </button>
         </div>
         {createNotice !== undefined && (
-          <p className={createNotice.kind === 'ok' ? css.ok : createNotice.kind === 'error' ? css.error : css.info} role="status">
+          <p className={createNotice.kind === 'ok' ? css.ok : css.error} role="status">
             {createNotice.text}
           </p>
         )}
@@ -674,7 +562,7 @@ export function WorkshopTab({
       </section>
       <p className={css.footnote}>{t('workshopSettingsHint')}</p>
       {notice !== undefined && (
-        <p className={notice.kind === 'ok' ? css.ok : notice.kind === 'error' ? css.error : css.info} role="status">
+        <p className={notice.kind === 'ok' ? css.ok : css.error} role="status">
           {notice.text}
         </p>
       )}
@@ -697,8 +585,7 @@ export function SkillCenterOverlay({
   const practices = usePractices(value => value)
   const graphData = useGraphData(value => value)
   const pendingMemories = usePendingMemories(value => value)
-  const [finishing, setFinishing] = useState(false)
-  const [trainingNotice, setTrainingNotice] = useState<Notice>()
+  const { busy: finishing, notice: trainingNotice, setNotice: setTrainingNotice, run: runFinish } = useAction()
   useEffect(() => {
     if (center.view === 'closed') return
     if (center.view === 'skills') void refreshOverview()
@@ -720,19 +607,13 @@ export function SkillCenterOverlay({
   }, [center.view, refreshOverview, refreshExperiences, refreshPendingMemories])
   if (center.view === 'closed') return null
 
-  const handleFinishTraining = async (): Promise<void> => {
-    if (finishing) return
-    setFinishing(true)
-    try {
+  const handleFinishTraining = (): void => {
+    void runFinish('finish', async () => {
       const result = await finishTraining()
       setTrainingNotice(result.ok
         ? { kind: 'ok', text: t('trainingFinishSent') }
         : { kind: 'error', text: result.error === 'no-session' ? t('retrainNoSession') : t('trainingFinishFailed') })
-    } catch {
-      setTrainingNotice({ kind: 'error', text: t('trainingFinishFailed') })
-    } finally {
-      setFinishing(false)
-    }
+    }, { fail: t('trainingFinishFailed') })
   }
 
   const installedIds = new Set(store.skills.map(skill => skill.id))
@@ -781,12 +662,12 @@ export function SkillCenterOverlay({
             <button
               type="button"
               className={css.primary}
-              disabled={finishing}
-              onClick={() => { void handleFinishTraining() }}
+              disabled={finishing !== undefined}
+              onClick={() => { handleFinishTraining() }}
             >
-              {finishing ? t('pending') : t('trainingFinish')}
+              {finishing !== undefined ? t('pending') : t('trainingFinish')}
             </button>
-            <button type="button" className={css.ghost} disabled={finishing} onClick={cancelTraining}>
+            <button type="button" className={css.ghost} disabled={finishing !== undefined} onClick={cancelTraining}>
               {t('cancel')}
             </button>
             {trainingNotice !== undefined && (

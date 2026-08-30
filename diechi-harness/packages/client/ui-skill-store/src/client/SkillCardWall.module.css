@@ -176,13 +176,11 @@
   color: var(--dsw-alias-label-tertiary);
 }
 
+/* 类型：去掉圆角底块，降为灰字 */
 .kind {
   flex: none;
   font-size: 11px;
-  color: var(--dsw-alias-state-business-primary);
-  background: var(--dsw-alias-interactive-bg-hover-accent);
-  border-radius: 999px;
-  padding: 2px 8px;
+  color: var(--dsw-alias-label-tertiary);
 }
 
 .desc {
@@ -205,39 +203,42 @@
   white-space: nowrap;
 }
 
-.stats {
+/* 主数字：4 项之和，卡上唯一的视觉主角 */
+.heroStat {
   display: flex;
-  gap: 8px;
-  margin-top: auto;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 5px;
 }
 
-.stat {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 1px;
-  flex: 1;
-  padding: 6px 4px;
-  border-radius: 8px;
-  background: var(--dsw-alias-interactive-bg-hover);
-}
-
-.statValue {
-  font-size: 15px;
-  font-weight: 600;
+.heroValue {
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1;
   color: var(--dsw-alias-label-primary);
+  font-variant-numeric: tabular-nums;
 }
 
-.statLabel {
-  font-size: 10.5px;
+.heroLabel {
+  font-size: 11px;
   color: var(--dsw-alias-label-tertiary);
 }
 
+/* 4 项明细降为灰字一行：不带底色、不带边框，需要细看时才读 */
+.statLine {
+  flex-basis: 100%;
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 承担原先 .stats 的 margin-top:auto：卡片高度不齐时把底部信息压到底 */
 .cardFoot {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  margin-top: auto;
 }
 
 .updated {

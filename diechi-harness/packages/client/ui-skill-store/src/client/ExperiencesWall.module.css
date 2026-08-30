@@ -139,19 +139,30 @@
   padding: 2px 8px;
 }
 
+/* 主数字（阅历总量）+ 灰字明细，与技能卡片墙同一套语言 */
 .statusStats {
   display: flex;
-  gap: 10px;
+  flex-direction: column;
+  gap: 2px;
 }
 
-.statusStat {
+.statusHero {
   font-size: 12px;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--dsw-alias-label-tertiary);
 }
 
-.statusStat b {
+.statusHero b {
+  margin-right: 3px;
+  font-size: 20px;
+  font-weight: 700;
   color: var(--dsw-alias-label-primary);
-  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.statusLine {
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
+  font-variant-numeric: tabular-nums;
 }
 
 .statusUpdated {
@@ -192,13 +203,11 @@
   color: var(--dsw-alias-label-primary);
 }
 
-.timelineStatus {
-  flex: none;
+/* 静态事实（来源、处置状态、建议归位）统一降为灰字。
+   卡上唯一保留色块的是 .reviewBadge —— 它是唯一需要用户行动的信号。 */
+.metaText {
   font-size: 11px;
-  border-radius: 999px;
-  padding: 2px 9px;
-  color: var(--dsw-alias-label-secondary);
-  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-tertiary);
 }
 
 .timelineBody {
@@ -222,14 +231,6 @@
 .timelineDate {
   font-size: 11px;
   color: var(--dsw-alias-label-tertiary);
-}
-
-.suggest {
-  font-size: 11px;
-  color: var(--dsw-alias-state-business-primary);
-  background: var(--dsw-alias-interactive-bg-hover-accent);
-  border-radius: 999px;
-  padding: 2px 8px;
 }
 
 /* 待确认徽标（低置信度归纳，人工核对前不参与注入） */
@@ -276,16 +277,6 @@
 
 .ok { color: var(--dsw-alias-state-success-primary); font-size: 13px; margin: 0; }
 .error { color: var(--dsw-alias-state-error-primary); font-size: 13px; margin: 0; }
-
-/* 来源徽标（对话归纳 / 视频实操 / 联网信息 / 用户直述） */
-.sourceBadge {
-  flex: none;
-  font-size: 11px;
-  border-radius: 999px;
-  padding: 2px 9px;
-  color: var(--dsw-alias-state-business-primary);
-  background: var(--dsw-alias-interactive-bg-hover-accent);
-}
 
 .timelineHead .timelineMeta {
   flex: none;

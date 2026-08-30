@@ -1,174 +1,143 @@
 /**
- * 知识图谱视图（3D）：3D 力导向布局 + 透视投影 + SVG 渲染。
- * 节点按类型着色：知识蓝 / 记忆绿 / 实操橙（scene=已归位的实操行动项）。
- * 交互：拖拽旋转视角（轨道控制）、滚轮缩放、点击节点看详情、拖动节点微调。
- * 纯手写 3D 数学，不依赖 d3/three，无额外包。
+ * 知识图谱视图（3D）：力导向布局 + 透视投影 + SVG 渲染。
+ *
+ * 这一层只做**状态编排与事件处理**；数学在 `graph3d.ts`，绘制在
+ * `GraphScene.tsx` / `GraphDetail.tsx` / `GraphLegend.tsx`。
+ *
+ * 交互：拖拽空白处旋转视角、滚轮缩放、点击节点聚焦（相机缓动到该节点）、
+ * 拖动节点微调位置、搜索命中高亮、图例按类型筛选。
+ *
+ * 布局：详情面板是**挤压式的右栏**（不是浮在画布上的浮层），画布让出宽度。
+ * 这样聚焦的节点永远落在剩余画布的正中，不会被面板压住。
+ * 这里有个连带约束：面板**只能由点击（selectedId）驱动**，不能由 hover 驱动——
+ * hover 会让画布随光标在节点间移动而反复伸缩，进而让光标脱离节点，
+ * 形成「收缩→脱离→展开→又命中」的抖动死循环。
+ *
+ * 相对最初版本修掉的三个问题：
+ * 1. **拖动节点无效** —— 原实现直接 mutate `useMemo` 返回的坐标对象，而拖拽分支
+ *    又提前 return，全程零 state 变更，React 根本不会重渲染。现在拖动写入
+ *    `overrides` state。
+ * 2. **远处节点点不中** —— 见 graph3d.ts 的 pickNode（屏幕像素判定 + 最小命中半径）。
+ * 3. **每次打开布局都不一样** —— 见 graph3d.ts 的种子化布局。
  */
-import { useMemo, useRef, useState } from 'react'
-import type { BrainGraphSnapshot, BrainGraphNode, BrainGraphEdge } from '@deepseek-ai/dsh-api-remotes/types'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { MouseEvent as ReactMouseEvent, WheelEvent as ReactWheelEvent } from 'react'
+import type { BrainGraphSnapshot, BrainGraphNode } from '@deepseek-ai/dsh-api-remotes/types'
 import type { SkillStoreKey } from './locales.ts'
+import {
+  layoutGraph, nodeRadius, projectPoint, screenDeltaToWorld,
+  makePickFrame, pickNode,
+} from './graph3d.ts'
+import type { Camera, P3, PickFrame, PlacedNode, Viewport } from './graph3d.ts'
+import { GraphScene } from './GraphScene.tsx'
+import type { ProjectedEdge, RootMarker } from './GraphScene.tsx'
+import { GraphDetail } from './GraphDetail.tsx'
+import { GraphLegend } from './GraphLegend.tsx'
+import type { GraphNodeType } from './graph3d.ts'
 import css from './KnowledgeGraph.module.css'
 
-/** 节点类型 → 颜色 */
-const NODE_COLORS: Record<string, { fill: string; stroke: string; glow: string }> = {
-  knowledge: { fill: '#3b82f6', stroke: '#1d4ed8', glow: 'rgba(59,130,246,0.35)' },
-  memory:    { fill: '#10b981', stroke: '#047857', glow: 'rgba(16,185,129,0.35)' },
-  scene:     { fill: '#f59e0b', stroke: '#b45309', glow: 'rgba(245,158,11,0.35)' },
-}
+/** 画布逻辑尺寸（viewBox）。模块级常量，引用稳定，可安全进 useMemo 依赖。 */
+const VIEWPORT: Viewport = { w: 1000, h: 680, cx: 500, cy: 340, focal: 620 }
 
-/** 节点类型 → 标签 */
-const TYPE_LABEL: Record<string, string> = {
-  knowledge: '知识',
-  memory:    '记忆',
-  scene:     '实操',
-}
-
-/** 节点基础半径（类型区分）。 */
-function nodeRadius(n: BrainGraphNode): number {
-  return n.type === 'knowledge' ? 15 : n.type === 'memory' ? 12 : 10
-}
-
-/** 3D 点。 */
-interface P3 { x: number; y: number; z: number }
-
-/** 轻量 3D 力导向模拟：按技能分簇初始化（同技能聚团、簇间拉开），再三维力迭代。 */
-function simulateLayout3D(
-  nodes: readonly BrainGraphNode[],
-  edges: readonly BrainGraphEdge[],
-  iterations = 320,
-): Map<string, P3> {
-  const pos = new Map<string, P3>()
-  // 主脑整理后的簇：同 skillId 的阅历是一个知识团；未归位（''）居中。
-  const clusters = new Map<string, BrainGraphNode[]>()
-  for (const n of nodes) {
-    const list = clusters.get(n.skillId) ?? []
-    list.push(n)
-    clusters.set(n.skillId, list)
-  }
-  const clusterIds = [...clusters.keys()]
-  // 簇中心沿球面分布（未归位放原点附近，其余均匀铺开）。
-  const clusterCenter = new Map<string, P3>()
-  let globalIdx = 0
-  for (const id of clusterIds) {
-    if (id === '') {
-      clusterCenter.set(id, { x: 0, y: 0, z: 0 })
-      continue
-    }
-    const golden = Math.PI * (3 - Math.sqrt(5))
-    const y = 1 - (globalIdx / Math.max(1, clusterIds.length - 1)) * 2
-    const r = Math.sqrt(Math.max(0, 1 - y * y))
-    const theta = golden * globalIdx
-    clusterCenter.set(id, { x: 300 * r * Math.cos(theta), y: 300 * y, z: 300 * r * Math.sin(theta) })
-    globalIdx += 1
-  }
-  // 簇内节点围绕簇中心散布（小半径），体现「一个技能 = 一团阅历」。
-  for (const n of nodes) {
-    const center = clusterCenter.get(n.skillId) ?? { x: 0, y: 0, z: 0 }
-    const a = Math.random() * Math.PI * 2
-    const b = Math.acos(2 * Math.random() - 1)
-    const r = 70 + Math.random() * 50
-    pos.set(n.id, {
-      x: center.x + r * Math.sin(b) * Math.cos(a),
-      y: center.y + r * Math.sin(b) * Math.sin(a),
-      z: center.z + r * Math.cos(b),
-    })
-  }
-  for (let iter = 0; iter < iterations; iter++) {
-    const temp = 1 - iter / iterations
-    const force = new Map<string, P3>()
-    for (const id of pos.keys()) force.set(id, { x: 0, y: 0, z: 0 })
-    // 斥力（所有对，3D）
-    for (let i = 0; i < nodes.length; i++) {
-      for (let j = i + 1; j < nodes.length; j++) {
-        const a = pos.get(nodes[i]!.id)!
-        const b = pos.get(nodes[j]!.id)!
-        let dx = a.x - b.x, dy = a.y - b.y, dz = a.z - b.z
-        const dist = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1
-        const repulse = 320000 / (dist * dist)
-        const fx = (dx / dist) * repulse, fy = (dy / dist) * repulse, fz = (dz / dist) * repulse
-        const fa = force.get(nodes[i]!.id)!
-        const fb = force.get(nodes[j]!.id)!
-        fa.x += fx; fa.y += fy; fa.z += fz
-        fb.x -= fx; fb.y -= fy; fb.z -= fz
-      }
-    }
-    // 引力（边：同簇逻辑关联）
-    for (const e of edges) {
-      const a = pos.get(e.source), b = pos.get(e.target)
-      if (!a || !b) continue
-      const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z
-      const dist = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1
-      const attract = dist * 0.02 * e.weight
-      const fx = (dx / dist) * attract, fy = (dy / dist) * attract, fz = (dz / dist) * attract
-      const fa = force.get(e.source)!, fb = force.get(e.target)!
-      fa.x += fx; fa.y += fy; fa.z += fz
-      fb.x -= fx; fb.y -= fy; fb.z -= fz
-    }
-    // 簇锚定：每个节点被拉向自己的簇中心（保持技能组团，不漂散）。
-    for (const n of nodes) {
-      const center = clusterCenter.get(n.skillId) ?? { x: 0, y: 0, z: 0 }
-      const p = pos.get(n.id)!
-      const f = force.get(n.id)!
-      f.x += (center.x - p.x) * 0.012
-      f.y += (center.y - p.y) * 0.012
-      f.z += (center.z - p.z) * 0.012
-    }
-    // 应用
-    for (const [id, p] of pos) {
-      const f = force.get(id)!
-      const len = Math.sqrt(f.x * f.x + f.y * f.y + f.z * f.z) || 1
-      const step = Math.min(len, 22) * temp
-      p.x += (f.x / len) * step
-      p.y += (f.y / len) * step
-      p.z += (f.z / len) * step
-    }
-  }
-  return pos
-}
-
-/**
- * 3D → 屏幕投影：先绕 Y 轴（yaw）再绕 X 轴（pitch）旋转，再透视投影。
- * @returns 屏幕坐标 + 深度缩放因子（>1 靠近相机）。
- */
-function project(
-  p: P3, yaw: number, pitch: number, zoom: number,
-  cx: number, cy: number, focal = 620,
-): { x: number; y: number; s: number; depth: number } {
-  const cosY = Math.cos(yaw), sinY = Math.sin(yaw)
-  const cosP = Math.cos(pitch), sinP = Math.sin(pitch)
-  const x1 = p.x * cosY + p.z * sinY
-  const z1 = -p.x * sinY + p.z * cosY
-  const y1 = p.y * cosP - z1 * sinP
-  const z2 = p.y * sinP + z1 * cosP
-  const depth = z2 // 旋转后深度
-  const s = zoom * (focal / (focal + depth)) // 透视：越远越小
-  return { x: cx + x1 * s, y: cy + y1 * s, s, depth }
-}
-
-/** 根节点（skill 名称）的虚拟 ID。 */
+const INITIAL_CAMERA: Camera = { yaw: -0.6, pitch: 0.35, zoom: 1, focus: { x: 0, y: 0, z: 0 } }
+const MIN_ZOOM = 0.3
+const MAX_ZOOM = 3
+const PITCH_LIMIT = 1.2
+/** 聚焦某个节点时拉近到的倍率。 */
+const FOCUS_ZOOM = 1.6
+const FOCUS_MS = 420
+/** 超过这个位移（像素）就算拖动，不再当作点击。 */
+const DRAG_SLOP_PX = 3
+/** 技能簇根节点的虚拟 id。 */
 const SKILL_ROOT_ID = '__skill_root__'
 
+const ORIGIN: P3 = { x: 0, y: 0, z: 0 }
+
+/** 缓动曲线（easeOutCubic）。 */
+function easeOut(t: number): number {
+  return 1 - (1 - t) ** 3
+}
+
+const ZOOM_CLAMP = (z: number): number => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z))
+
+/** 拖拽空白处旋转视角时的手势状态。 */
+interface RotateState {
+  x: number
+  y: number
+  yaw: number
+  pitch: number
+}
+
+/** 拖动单个节点时的手势状态；`moved` 用来区分「拖动」与「点击」。 */
+interface DragState {
+  id: string
+  x: number
+  y: number
+  origin: P3
+  moved: boolean
+}
+
 interface Props {
-  t: (key: SkillStoreKey) => string
+  /** `this: void` 见 GraphScene 的说明。 */
+  t(this: void, key: SkillStoreKey, params?: Record<string, unknown>): string
   snapshot: BrainGraphSnapshot
   skillId?: string
-  onClose(): void
+  onClose(this: void): void
 }
 
 export function KnowledgeGraph({ t, snapshot, skillId, onClose }: Props) {
   const svgRef = useRef<SVGSVGElement>(null)
   const [hoveredId, setHoveredId] = useState<string>()
   const [selectedId, setSelectedId] = useState<string>()
-  const [zoom, setZoom] = useState(1)
-  const [cam, setCam] = useState({ yaw: -0.6, pitch: 0.35 })
+  const [camera, setCamera] = useState<Camera>(INITIAL_CAMERA)
   const [query, setQuery] = useState('')
-  const [filterType, setFilterType] = useState<string>() // undefined=全部
-  const rotateRef = useRef<{ startX: number; startY: number; yaw: number; pitch: number } | null>(null)
-  const dragRef = useRef<{ id: string; startX: number; startY: number } | null>(null)
+  const [filterType, setFilterType] = useState<GraphNodeType>()
+  /** 用户拖动过的节点坐标，覆盖力导向结果。 */
+  const [overrides, setOverrides] = useState<ReadonlyMap<string, P3>>(new Map())
 
-  const W = 1000, H = 680, CX = W / 2, CY = H / 2
+  const rotateRef = useRef<RotateState | null>(null)
+  const dragRef = useRef<DragState | null>(null)
+  const rafRef = useRef<number>()
+  /** 与 camera 同步的镜像，供 rAF 回调读取最新值而不产生闭包过期。 */
+  const cameraRef = useRef(camera)
+  cameraRef.current = camera
+  /** 事件回调与 rAF 需要读最新坐标，但不想因此重建回调，所以用 ref 镜像。 */
+  const positionsRef = useRef<ReadonlyMap<string, P3>>(new Map())
 
-  // 搜索匹配：query 命中 label/content/topic 的节点 id 集合。
+  useEffect(() => () => {
+    if (rafRef.current !== undefined) cancelAnimationFrame(rafRef.current)
+  }, [])
+
+  // ---- 相机缓动：聚焦到某个世界坐标 ----
+  const easeTo = useCallback((target: P3, zoom: number): void => {
+    if (rafRef.current !== undefined) cancelAnimationFrame(rafRef.current)
+    const from = { ...cameraRef.current.focus }
+    const fromZoom = cameraRef.current.zoom
+    const begin = performance.now()
+    const step = (now: number): void => {
+      const p = Math.min(1, (now - begin) / FOCUS_MS)
+      const k = easeOut(p)
+      setCamera(prev => ({
+        ...prev,
+        focus: {
+          x: from.x + (target.x - from.x) * k,
+          y: from.y + (target.y - from.y) * k,
+          z: from.z + (target.z - from.z) * k,
+        },
+        zoom: fromZoom + (zoom - fromZoom) * k,
+      }))
+      rafRef.current = p < 1 ? requestAnimationFrame(step) : undefined
+    }
+    rafRef.current = requestAnimationFrame(step)
+  }, [])
+
+  /** 聚焦某个节点：相机移到它身上并拉近。 */
+  const focusOn = useCallback((id: string): void => {
+    const p = positionsRef.current.get(id)
+    if (p !== undefined) easeTo(p, FOCUS_ZOOM)
+  }, [easeTo])
+
+  // ---- 搜索 ----
   const searchMatches = useMemo(() => {
     const q = query.trim().toLowerCase()
     if (q === '') return undefined
@@ -179,142 +148,192 @@ export function KnowledgeGraph({ t, snapshot, skillId, onClose }: Props) {
     return matched
   }, [query, snapshot.nodes])
 
-  // 类型筛选：undefined=全部，否则只显示该类型。
-  const visibleFilter = (n: BrainGraphNode): boolean => filterType === undefined || n.type === filterType
-
-  // 3D 布局（节点世界坐标，稳定于快照）。
-  const layout = useMemo(() => {
-    const pos = simulateLayout3D(snapshot.nodes, snapshot.edges)
-    if (skillId !== undefined && skillId !== '') {
-      pos.set(SKILL_ROOT_ID, { x: 0, y: 0, z: 0 })
-    }
+  // ---- 布局：力导向 + 用户拖动覆盖 ----
+  // 单技能视图额外放一个虚拟根节点在原点，作为该技能这团阅历的聚合标记。
+  const baseLayout = useMemo(() => {
+    const pos = layoutGraph(snapshot.nodes, snapshot.edges)
+    if (skillId !== undefined && skillId !== '') pos.set(SKILL_ROOT_ID, { ...ORIGIN })
     return pos
-  }, [snapshot, skillId])
+  }, [snapshot.nodes, snapshot.edges, skillId])
 
-  // 投影：节点 + 根 + 边（一次算完，渲染用）。
-  const projected = useMemo(() => {
-    const nodes = snapshot.nodes.map((n: BrainGraphNode) => {
-      const p = layout.get(n.id)
-      if (!p) return null
-      if (!visibleFilter(n)) return null
-      return { node: n, proj: project(p, cam.yaw, cam.pitch, zoom, CX, CY) }
-    }).filter((x): x is { node: BrainGraphNode; proj: { x: number; y: number; s: number; depth: number } } => x !== null)
-    const visibleIds = new Set(nodes.map(x => x.node.id))
-    const edges = snapshot.edges.map((e: { source: string; target: string; weight: number }) => {
-      if (!visibleIds.has(e.source) || !visibleIds.has(e.target)) return null
-      const a = layout.get(e.source), b = layout.get(e.target)
-      if (!a || !b) return null
-      return { e, pa: project(a, cam.yaw, cam.pitch, zoom, CX, CY), pb: project(b, cam.yaw, cam.pitch, zoom, CX, CY) }
-    }).filter((x): x is { e: { source: string; target: string; weight: number }; pa: { x: number; y: number; s: number; depth: number }; pb: { x: number; y: number; s: number; depth: number } } => x !== null)
-    // 深度排序（painter's algorithm）：深（depth 大）的先画。
-    nodes.sort((a, b) => b.proj.depth - a.proj.depth)
-    return { nodes, edges }
-  }, [snapshot, layout, cam, zoom, filterType])
+  const positions = useMemo(() => {
+    if (overrides.size === 0) return baseLayout
+    const merged = new Map(baseLayout)
+    for (const [id, p] of overrides) merged.set(id, p)
+    return merged
+  }, [baseLayout, overrides])
 
-  const rootProj = useMemo(() => {
-    const p = layout.get(SKILL_ROOT_ID)
-    return p ? project(p, cam.yaw, cam.pitch, zoom, CX, CY) : null
-  }, [layout, cam, zoom])
+  positionsRef.current = positions
+
+  // ---- 投影 ----
+  const { placed, edges, root } = useMemo(() => {
+    const out: PlacedNode[] = []
+    const visible = new Set<string>()
+    for (const n of snapshot.nodes) {
+      if (filterType !== undefined && n.type !== filterType) continue
+      const p = positions.get(n.id)
+      if (p === undefined) continue
+      const proj = projectPoint(p, camera, VIEWPORT)
+      out.push({ id: n.id, node: n, proj, r: nodeRadius(n.type) * proj.s })
+      visible.add(n.id)
+    }
+    const es: ProjectedEdge[] = []
+    for (const e of snapshot.edges) {
+      if (!visible.has(e.source) || !visible.has(e.target)) continue
+      const a = positions.get(e.source)
+      const b = positions.get(e.target)
+      if (a === undefined || b === undefined) continue
+      es.push({
+        key: `${e.source}->${e.target}`,
+        edge: e,
+        pa: projectPoint(a, camera, VIEWPORT),
+        pb: projectPoint(b, camera, VIEWPORT),
+      })
+    }
+    // 画家算法：深度降序 = 远的先入列 = 先画 = 被近的盖住。
+    out.sort((x, y) => y.proj.depth - x.proj.depth)
+
+    // 类型筛选生效时不画簇心——它是聚合标记，不属于任何单一类型。
+    let rootMark: RootMarker | null = null
+    const rp = positions.get(SKILL_ROOT_ID)
+    if (rp !== undefined && filterType === undefined && skillId !== undefined && skillId !== '') {
+      rootMark = { label: skillId.slice(0, 10), proj: projectPoint(rp, camera, VIEWPORT) }
+    }
+    return { placed: out, edges: es, root: rootMark }
+  }, [snapshot.nodes, snapshot.edges, positions, camera, filterType, skillId])
+
+  const counts = useMemo(() => {
+    const acc: Record<GraphNodeType, number> = { knowledge: 0, memory: 0, scene: 0 }
+    for (const n of snapshot.nodes) acc[n.type] += 1
+    return acc
+  }, [snapshot.nodes])
 
   const skillTitle = skillId !== undefined && skillId !== '' ? skillId : t('graphGlobal')
 
-  // hover/选中详情（用投影坐标做命中测试）。
-  const hitTest = (clientX: number, clientY: number): string | undefined => {
-    const svg = svgRef.current
-    if (!svg) return undefined
-    const rect = svg.getBoundingClientRect()
-    const mx = ((clientX - rect.left) / rect.width) * W
-    const my = ((clientY - rect.top) / rect.height) * H
-    let best: string | undefined
-    let bestDist = Infinity
-    for (const { node, proj } of projected.nodes) {
-      const r = nodeRadius(node) * proj.s
-      const d = Math.hypot(mx - proj.x, my - proj.y)
-      if (d < r + 6 && d < bestDist) { bestDist = d; best = node.id }
+  // ---- 详情：只认点击选中 ----
+  // 不用 hover 驱动详情面板，理由见文件头：面板会挤压画布宽度，hover 驱动会抖动。
+  // hover 仍然负责「高亮节点 + 邻居」，只是不再撑开面板。
+  const detailNode: BrainGraphNode | undefined = selectedId === undefined
+    ? undefined
+    : placed.find(p => p.id === selectedId)?.node
+
+  const activeId = selectedId ?? hoveredId
+
+  const highlight = useMemo(() => {
+    if (activeId === undefined) return undefined
+    const ids = new Set<string>([activeId])
+    for (const e of snapshot.edges) {
+      if (e.source === activeId) ids.add(e.target)
+      if (e.target === activeId) ids.add(e.source)
     }
-    return best
+    return ids
+  }, [snapshot.edges, activeId])
+
+  // ---- 事件 ----
+  const frameOf = (): PickFrame | undefined => {
+    const svg = svgRef.current
+    return svg === null ? undefined : makePickFrame(svg, VIEWPORT)
   }
 
-  const handleWheel = (e: React.WheelEvent<SVGSVGElement>): void => {
+  const handleWheel = (e: ReactWheelEvent<SVGSVGElement>): void => {
     e.preventDefault()
-    const delta = e.deltaY > 0 ? 0.9 : 1.1
-    setZoom(z => Math.min(3, Math.max(0.3, z * delta)))
+    setCamera(c => ({ ...c, zoom: ZOOM_CLAMP(c.zoom * (e.deltaY > 0 ? 0.9 : 1.1)) }))
   }
 
-  const handleMouseDown = (e: React.MouseEvent): void => {
+  const handleMouseDown = (e: ReactMouseEvent<SVGSVGElement>): void => {
     if (e.button !== 0) return
-    const id = hitTest(e.clientX, e.clientY)
+    const frame = frameOf()
+    if (frame === undefined) return
+    const id = pickNode(placed, frame, e.clientX, e.clientY)
     if (id !== undefined) {
-      dragRef.current = { id, startX: e.clientX, startY: e.clientY }
-      // 点击节点：固定详情（点空白/✕ 才取消）；已选中再点则取消。
-      setSelectedId(prev => (prev === id ? undefined : id))
+      const origin = positions.get(id)
+      if (origin !== undefined) {
+        dragRef.current = { id, x: e.clientX, y: e.clientY, origin, moved: false }
+      }
       return
     }
-    // 点空白：取消固定详情。
-    setSelectedId(undefined)
-    rotateRef.current = { startX: e.clientX, startY: e.clientY, yaw: cam.yaw, pitch: cam.pitch }
+    // 点空白：进入旋转，并取消固定详情（在 mouseup 判定，避免拖动误清）。
+    rotateRef.current = { x: e.clientX, y: e.clientY, yaw: camera.yaw, pitch: camera.pitch }
   }
 
-  const handleMouseMove = (e: React.MouseEvent): void => {
-    // 拖动节点：把屏幕位移换算到世界坐标（粗略，沿相机平面移动）。
-    if (dragRef.current !== null) {
-      const svg = svgRef.current
-      const rect = svg?.getBoundingClientRect()
-      if (!rect) return
-      const dx = ((e.clientX - dragRef.current.startX) / rect.width) * W
-      const dy = ((e.clientY - dragRef.current.startY) / rect.height) * H
-      const p = layout.get(dragRef.current.id)
-      if (p) {
-        p.x += (dx * Math.cos(cam.yaw) - dy * Math.sin(cam.pitch) * Math.sin(cam.yaw)) * 1.2
-        p.y += dy * Math.cos(cam.pitch) * 1.2
-        p.z += (-dx * Math.sin(cam.yaw) - dy * Math.sin(cam.pitch) * Math.cos(cam.yaw)) * 1.2
+  const handleMouseMove = (e: ReactMouseEvent<SVGSVGElement>): void => {
+    const drag = dragRef.current
+    if (drag !== null) {
+      if (!drag.moved
+        && Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < DRAG_SLOP_PX) return
+      drag.moved = true
+      const frame = frameOf()
+      if (frame === undefined) return
+      const s = projectPoint(drag.origin, camera, VIEWPORT).s
+      const d = screenDeltaToWorld(
+        (e.clientX - drag.x) / frame.scale,
+        (e.clientY - drag.y) / frame.scale,
+        s,
+        camera,
+      )
+      setOverrides(prev => new Map(prev).set(drag.id, {
+        x: drag.origin.x + d.x,
+        y: drag.origin.y + d.y,
+        z: drag.origin.z + d.z,
+      }))
+      return
+    }
+    const rot = rotateRef.current
+    if (rot !== null) {
+      setCamera(c => ({
+        ...c,
+        yaw: rot.yaw + (e.clientX - rot.x) * 0.008,
+        pitch: Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, rot.pitch + (e.clientY - rot.y) * 0.008)),
+      }))
+      return
+    }
+    const frame = frameOf()
+    if (frame === undefined) return
+    setHoveredId(pickNode(placed, frame, e.clientX, e.clientY))
+  }
+
+  const handleMouseUp = (e: ReactMouseEvent<SVGSVGElement>): void => {
+    const drag = dragRef.current
+    if (drag !== null) {
+      dragRef.current = null
+      if (!drag.moved) {
+        // 视为点击：切换选中，并把相机缓动到该节点。
+        if (selectedId === drag.id) {
+          setSelectedId(undefined)
+          easeTo(ORIGIN, 1)
+        } else {
+          setSelectedId(drag.id)
+          focusOn(drag.id)
+        }
       }
-      dragRef.current.startX = e.clientX
-      dragRef.current.startY = e.clientY
       return
     }
     if (rotateRef.current !== null) {
-      const dx = e.clientX - rotateRef.current.startX
-      const dy = e.clientY - rotateRef.current.startY
-      setCam({
-        yaw: rotateRef.current.yaw + dx * 0.008,
-        pitch: Math.max(-1.2, Math.min(1.2, rotateRef.current.pitch + dy * 0.008)),
-      })
-      return
+      rotateRef.current = null
+      // 空白处没有产生旋转位移才算「点空白」：清掉固定详情并回到全景。
+      const frame = frameOf()
+      if (frame !== undefined && pickNode(placed, frame, e.clientX, e.clientY) === undefined) {
+        setSelectedId(undefined)
+        if (selectedId !== undefined) easeTo(ORIGIN, 1)
+      }
     }
-    setHoveredId(hitTest(e.clientX, e.clientY))
-  }
-
-  const handleMouseUp = (): void => {
-    rotateRef.current = null
-    dragRef.current = null
   }
 
   const resetView = (): void => {
-    setCam({ yaw: -0.6, pitch: 0.35 })
-    setZoom(1)
+    if (rafRef.current !== undefined) cancelAnimationFrame(rafRef.current)
+    setCamera(INITIAL_CAMERA)
     setSelectedId(undefined)
     setHoveredId(undefined)
+    setOverrides(new Map())
   }
-
-  // 详情：hover 临时预览；点击固定（selectedId 优先）。
-  const detailNode = projected.nodes.find(p => p.node.id === (selectedId ?? hoveredId))?.node
-  const connectedIds = useMemo(() => {
-    const ids = new Set<string>()
-    if (!detailNode) return ids
-    for (const e of snapshot.edges) {
-      if (e.source === detailNode.id) ids.add(e.target)
-      if (e.target === detailNode.id) ids.add(e.source)
-    }
-    ids.add(detailNode.id)
-    return ids
-  }, [snapshot.edges, detailNode])
 
   return (
     <div className={css.root}>
       <header className={css.header}>
-        <button type="button" className={css.backBtn} onClick={onClose}>← {t('graphBack')}</button>
-        <span className={css.title}>{t('graphTitle').replace('{title}', skillTitle)}</span>
+        <button type="button" className={css.backBtn} onClick={onClose}>
+          ← {t('graphBack')}
+        </button>
+        <span className={css.title}>{t('graphTitle', { title: skillTitle })}</span>
         <input
           className={css.searchInput}
           type="text"
@@ -323,126 +342,53 @@ export function KnowledgeGraph({ t, snapshot, skillId, onClose }: Props) {
           onChange={(e) => { setQuery(e.target.value); setSelectedId(undefined) }}
         />
         <span className={css.stats}>
-          {t('graphNodes').replace('{n}', String(projected.nodes.length))}
-          · {t('graphEdges').replace('{m}', String(projected.edges.length))}
+          {t('graphNodes', { n: placed.length })}
+          {' · '}
+          {t('graphEdges', { m: edges.length })}
         </span>
       </header>
-      <svg
-        ref={svgRef}
-        className={css.svg}
-        viewBox={`0 0 ${W} ${H}`}
-        onWheel={handleWheel}
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseUp}
-      >
-        {/* 边 */}
-        {projected.edges.map(({ e, pa, pb }, i) => {
-          const dimmed = detailNode !== undefined && !connectedIds.has(e.source) && !connectedIds.has(e.target)
-          const searchDimmed = searchMatches !== undefined && !(searchMatches.has(e.source) && searchMatches.has(e.target))
-          const avgDepth = (pa.depth + pb.depth) / 2
-          const alpha = dimmed || searchDimmed ? 0.04 : 0.18 + e.weight * 0.06
-          return (
-            <line
-              key={i}
-              x1={pa.x} y1={pa.y} x2={pb.x} y2={pb.y}
-              stroke={`rgba(110,150,220,${Math.max(0.02, alpha * (1 - avgDepth / 700))})`}
-              strokeWidth={Math.max(0.3, (0.6 + e.weight * 0.25) * Math.min(pa.s, pb.s))}
-            />
-          )
-        })}
-        {/* skill 根节点（聚合标签） */}
-        {rootProj !== null && (
-          <g transform={`translate(${rootProj.x},${rootProj.y})`}>
-            <circle r={26 * rootProj.s} fill="rgba(30,64,175,0.14)" stroke="rgba(59,130,246,0.45)" strokeWidth={1.5} strokeDasharray="4,3" />
-            <text textAnchor="middle" dominantBaseline="middle"
-              fill="rgba(59,130,246,0.75)" fontSize={11} fontWeight={600}
-              style={{ pointerEvents: 'none', userSelect: 'none' }}>
-              {(skillTitle !== t('graphGlobal') ? skillTitle : '').slice(0, 10)}
-            </text>
-          </g>
+
+      {/* 画布与详情右栏平级排列：面板出现时画布让出宽度，而不是被面板盖住。 */}
+      <div className={css.body}>
+        <div className={css.canvasWrap}>
+          <GraphScene
+            svgRef={svgRef}
+            viewport={VIEWPORT}
+            placed={placed}
+            edges={edges}
+            root={root}
+            hoveredId={hoveredId}
+            selectedId={selectedId}
+            highlight={highlight}
+            searchMatches={searchMatches}
+            onWheel={handleWheel}
+            onMouseDown={handleMouseDown}
+            onMouseMove={handleMouseMove}
+            onMouseUp={handleMouseUp}
+          />
+
+          <div className={css.viewControls}>
+            <button
+              type="button" className={css.viewBtn}
+              onClick={() => { setCamera(c => ({ ...c, zoom: ZOOM_CLAMP(c.zoom * 1.25) })) }}
+              title={t('graphZoomIn')}
+            >+</button>
+            <button
+              type="button" className={css.viewBtn}
+              onClick={() => { setCamera(c => ({ ...c, zoom: ZOOM_CLAMP(c.zoom * 0.8) })) }}
+              title={t('graphZoomOut')}
+            >−</button>
+            <button type="button" className={css.viewBtn} onClick={resetView} title={t('graphReset')}>⟲</button>
+          </div>
+
+          <div className={css.hint}>{t('graphRotateHint')}</div>
+
+          <GraphLegend active={filterType} counts={counts} t={t} onToggle={setFilterType} />
+        </div>
+
+        {detailNode !== undefined && (
+          <GraphDetail node={detailNode} t={t} onClose={() => { setSelectedId(undefined) }} />
         )}
-        {/* 节点（已按深度排序，近的盖在远的上面） */}
-        {projected.nodes.map(({ node: n, proj }) => {
-          const colors = NODE_COLORS[n.type]!
-          const baseR = nodeRadius(n)
-          const r = baseR * proj.s
-          const isHovered = n.id === hoveredId
-          const isSelected = n.id === selectedId
-          const dimmed = detailNode !== undefined && !connectedIds.has(n.id)
-          const searchHit = searchMatches !== undefined && searchMatches.has(n.id)
-          const searchMiss = searchMatches !== undefined && !searchHit
-          const near = Math.max(0.35, Math.min(1, 1 - proj.depth / 900))
-          const opacity = searchMiss ? 0.12 : (dimmed ? 0.25 : 0.55 + 0.45 * near)
-          return (
-            <g key={n.id} transform={`translate(${proj.x},${proj.y})`}
-              onMouseEnter={() => setHoveredId(n.id)}
-              onMouseLeave={() => setHoveredId(undefined)}
-              style={{ cursor: isHovered || isSelected ? 'grab' : 'pointer' }}>
-              {/* 外发光（hover/选中/搜索命中） */}
-              {(isHovered || isSelected || searchHit) && <circle r={r + 7} fill={searchHit && !isHovered && !isSelected ? 'rgba(250,204,21,0.3)' : colors.glow} />}
-              {/* 主球 */}
-              <circle r={r} fill={colors.fill} stroke={isSelected ? '#fff' : searchHit ? '#facc15' : colors.stroke}
-                strokeWidth={isSelected ? 2.5 : isHovered || searchHit ? 2 : 1.2}
-                style={{ opacity, transition: 'stroke-width 0.12s' }} />
-              {/* 高光 */}
-              <ellipse cx={-r * 0.3} cy={-r * 0.3} rx={r * 0.35} ry={r * 0.25} fill="rgba(255,255,255,0.35)" />
-              {/* 标签（hover/选中放大） */}
-              <text y={r + 10} textAnchor="middle"
-                fill={searchMiss || dimmed ? 'rgba(128,128,128,0.3)' : `rgba(220,230,240,${0.55 + 0.4 * near})`}
-                fontSize={(isHovered || isSelected ? 12 : 10) * proj.s} fontWeight={isHovered || isSelected ? 600 : 500}
-                style={{ pointerEvents: 'none', userSelect: 'none', transition: 'font-size 0.12s' }}>
-                {n.label.length > 12 ? n.label.slice(0, 12) + '…' : n.label}
-              </text>
-            </g>
-          )
-        })}
-      </svg>
-      {/* 视角控制 */}
-      <div className={css.viewControls}>
-        <button type="button" className={css.viewBtn} onClick={() => setZoom(z => Math.min(3, z * 1.25))} title={t('graphZoomIn')}>+</button>
-        <button type="button" className={css.viewBtn} onClick={() => setZoom(z => Math.max(0.3, z * 0.8))} title={t('graphZoomOut')}>−</button>
-        <button type="button" className={css.viewBtn} onClick={resetView} title={t('graphReset')}>⟲</button>
-      </div>
-      {/* 操作提示 */}
-      <div className={css.hint}>{t('graphRotateHint')}</div>
-      {/* 右侧固定详情面板：点击节点打开，完整阅读 */}
-      {detailNode !== undefined && (
-        <aside className={css.detailPanel}>
-          <div className={css.detailHeader}>
-            <div className={css.detailType}>{TYPE_LABEL[detailNode.type]!}</div>
-            <button type="button" className={css.detailClose} onClick={() => setSelectedId(undefined)}>✕</button>
-          </div>
-          <h4 className={css.detailTitle}>{detailNode.label}</h4>
-          <p className={css.detailContent}>{detailNode.content}</p>
-          <div className={css.detailMeta}>
-            <span>{t('graphSource')}: {detailNode.source}</span>
-            <span>{detailNode.updatedAt.slice(0, 10)}</span>
-            {detailNode.skillId !== '' && <span>#{detailNode.skillId}</span>}
-          </div>
-        </aside>
-      )}
-      {/* 图例：可点击筛选类型 */}
-      <div className={css.legend}>
-        <button
-          type="button"
-          className={filterType === undefined ? css.legendAllActive : css.legendAll}
-          onClick={() => setFilterType(undefined)}
-        >
-          {t('graphAll')}
-        </button>
-        {(Object.entries(NODE_COLORS) as [string, typeof NODE_COLORS[string]][]).map(([type, colors]) => (
-          <button
-            key={type}
-            type="button"
-            className={filterType === type ? css.legendItemActive : css.legendItem}
-            onClick={() => setFilterType(prev => (prev === type ? undefined : type))}
-          >
-            <span className={css.legendDot} style={{ background: colors.fill }} />
-            <span>{TYPE_LABEL[type]}</span>
-          </button>
-        ))}
       </div>
     </div>
   )

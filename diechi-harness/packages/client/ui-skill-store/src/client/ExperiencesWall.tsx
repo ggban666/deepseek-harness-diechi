@@ -2,11 +2,23 @@
  * 阅历视图（skill-center 'experiences'）：上半是「技能库现状」——每个平权技能
  * 的记忆/知识/实操条数与最近活动（overview RPC），点技能卡进入该技能的知识图谱；
  * 下半是实操阅历时间线——视频投喂自动入库的 #实操 相册流，可一键归位到技能、改标签、删除。
+ *
+ * 2026-08-31 整理：
+ * - 四个动作（确认/归位/删除/处置记忆）原先各抄一遍「置忙 → try → 落提示 →
+ *   catch → 收忙」，还各自维护一个 busy state（busyTopic / removing /
+ *   confirming / memoryBusyId）。统一收进 `useAction`，对外只剩一个互斥标记。
+ * - `assignTarget()` 在 render 里对每条阅历做一次 `practices.find()`，而它被
+ *   `practices.map()` 内每张卡调用 → O(n²)。预建成 Map 一次查表。
+ * - `skillsById` 每次 render 重建，改 useMemo。
+ * - 信息层级：卡片上原先 4 个带底色的块（来源/状态/待审/建议）在抢注意力。
+ *   现在**只有「待审」保留色块**——它是唯一需要用户行动的信号；来源、状态、
+ *   建议归位都是静态事实，降为灰字。技能现状卡的数字同样改为主数字 + 灰字明细。
  */
-import { useState } from 'react'
+import { useMemo } from 'react'
 import type { BrainPendingMemory, BrainPracticeItem, SkillOverviewSnapshot } from '@deepseek-ai/dsh-api-remotes/types'
 import type { SkillStoreKey } from './locales.ts'
 import type { SkillManifestEntry } from './skill-format.ts'
+import { useAction, useBusy } from './use-action.ts'
 import css from './ExperiencesWall.module.css'
 
 /** 实操卡上的处置状态标签。 */
@@ -14,12 +26,19 @@ function statusLabel(t: (key: SkillStoreKey) => string, status: string): string 
   if (status === 'assigned') return t('expStatusAssigned')
   if (status === 'archived') return t('expStatusArchived')
   return t('expStatusPending')
-}/** 来源徽标：对话归纳 / 视频实操 / 联网信息 / 用户直述。 */
+}
+
+/** 来源标签：对话归纳 / 视频实操 / 联网信息 / 用户直述。 */
 function sourceLabel(t: (key: SkillStoreKey) => string, source: string): string {
   if (source === 'conversation') return t('expSourceConversation')
   if (source === 'web') return t('expSourceWeb')
   if (source === 'user') return t('expSourceUser')
   return t('expSourceVideo')
+}
+
+/** 动作标记：`kind:id`。同一时刻只允许一个写动作在飞（都写同一个 SQLite 大脑）。 */
+function actionKey(kind: string, id: string | number): string {
+  return `${kind}:${id}`
 }
 
 /** Props bound by the overlay. */
@@ -53,94 +72,47 @@ export interface ExperiencesWallProps {
 export function ExperiencesWall({
   t, overview, practices, skills, pendingMemories, onAssign, onRemove, onConfirm, onMemoryAction, onRefresh, onCreateSkill, onOpenGraph,
 }: ExperiencesWallProps) {
-  const [busyTopic, setBusyTopic] = useState<string>()
-  const [removing, setRemoving] = useState<string>()
-  const [confirming, setConfirming] = useState<string>()
-  const [memoryBusyId, setMemoryBusyId] = useState<number>()
-  const [notice, setNotice] = useState<{ kind: 'ok' | 'error'; text: string }>()
-  const [refreshing, setRefreshing] = useState(false)
+  const { busy, notice, run } = useAction()
+  const [refreshing, refresh] = useBusy()
 
-  const assignTarget = (topic: string): string => {
-    const item = practices.find(practice => practice.topic === topic)
-    return item?.suggestedSkill ?? ''
+  // 预建查表，替代 render 内的 practices.find() —— 后者在 map 里调用会退化成 O(n²)。
+  const suggestedByTopic = useMemo(
+    () => new Map(practices.map(item => [item.topic, item.suggestedSkill ?? ''])),
+    [practices],
+  )
+  const skillsById = useMemo(() => new Map(skills.map(skill => [skill.id, skill])), [skills])
+
+  const handleConfirm = (topic: string): void => {
+    void run(actionKey('confirm', topic), () => onConfirm(topic), {
+      ok: t('expConfirmedOk'),
+      fail: t('expConfirmedFail'),
+    })
   }
 
-  const handleConfirm = async (topic: string): Promise<void> => {
-    if (confirming !== undefined) return
-    setConfirming(topic)
-    setNotice(undefined)
-    try {
-      const ok = await onConfirm(topic)
-      setNotice(ok
-        ? { kind: 'ok', text: t('expConfirmedOk') }
-        : { kind: 'error', text: t('expConfirmedFail') })
-    } catch {
-      setNotice({ kind: 'error', text: t('expConfirmedFail') })
-    } finally {
-      setConfirming(undefined)
-    }
+  const handleAssign = (topic: string): void => {
+    const skillId = suggestedByTopic.get(topic) ?? ''
+    if (skillId === '') return
+    void run(actionKey('assign', topic), () => onAssign(topic, skillId), {
+      ok: t('expAssignedOk').replace('{topic}', topic),
+      fail: t('expAssignedFail'),
+    })
   }
 
-  const handleAssign = async (topic: string): Promise<void> => {
-    const skillId = assignTarget(topic)
-    if (skillId === '' || busyTopic !== undefined) return
-    setBusyTopic(topic)
-    setNotice(undefined)
-    try {
-      const ok = await onAssign(topic, skillId)
-      setNotice(ok
-        ? { kind: 'ok', text: t('expAssignedOk').replace('{topic}', topic) }
-        : { kind: 'error', text: t('expAssignedFail') })
-    } catch {
-      setNotice({ kind: 'error', text: t('expAssignedFail') })
-    } finally {
-      setBusyTopic(undefined)
-    }
+  const handleRemove = (topic: string): void => {
+    void run(actionKey('remove', topic), () => onRemove(topic), {
+      ok: t('expRemovedOk'),
+      fail: t('expRemovedFail'),
+    })
   }
 
-  const handleRemove = async (topic: string): Promise<void> => {
-    if (removing !== undefined) return
-    setRemoving(topic)
-    setNotice(undefined)
-    try {
-      const ok = await onRemove(topic)
-      setNotice(ok
-        ? { kind: 'ok', text: t('expRemovedOk') }
-        : { kind: 'error', text: t('expRemovedFail') })
-    } catch {
-      setNotice({ kind: 'error', text: t('expRemovedFail') })
-    } finally {
-      setRemoving(undefined)
-    }
-  }
-
-  const handleRefresh = async (): Promise<void> => {
-    setRefreshing(true)
-    try {
-      await onRefresh()
-    } finally {
-      setRefreshing(false)
-    }
-  }
-
-  const handleMemoryAction = async (id: number, confirm: boolean): Promise<void> => {
-    if (memoryBusyId !== undefined) return
-    setMemoryBusyId(id)
-    setNotice(undefined)
-    try {
-      const ok = await onMemoryAction(id, confirm)
-      setNotice(ok
-        ? { kind: 'ok', text: confirm ? t('memConfirmedOk') : t('memRemovedOk') }
-        : { kind: 'error', text: t('memActionFail') })
-    } catch {
-      setNotice({ kind: 'error', text: t('memActionFail') })
-    } finally {
-      setMemoryBusyId(undefined)
-    }
+  const handleMemoryAction = (id: number, confirm: boolean): void => {
+    void run(actionKey('memory', id), () => onMemoryAction(id, confirm), {
+      ok: confirm ? t('memConfirmedOk') : t('memRemovedOk'),
+      fail: t('memActionFail'),
+    })
   }
 
   const pendingCount = overview?.pendingPracticeCount ?? practices.filter(item => item.status === 'pending').length
-  const skillsById = new Map(skills.map(skill => [skill.id, skill]))
 
   return (
     <div className={css.wall}>
@@ -178,11 +150,22 @@ export function ExperiencesWall({
                     <span className={css.statusTitle}>{entry.title}</span>
                     {entry.enabled && <span className={css.onBadge}>{t('wallIdentityOn')}</span>}
                   </div>
+                  {/* 主数字：阅历总量；明细降为灰字一行，与技能卡片墙同一套语言 */}
                   <div className={css.statusStats}>
-                    <span className={css.statusStat}>{t('wallMemories')} <b>{entry.memoryCount}</b></span>
-                    <span className={css.statusStat}>{t('wallScenes')} <b>{entry.sceneCount}</b></span>
-                    <span className={css.statusStat}>{t('wallKnowledge')} <b>{entry.knowledgeCount}</b></span>
-                    <span className={css.statusStat}>{t('wallPractice')} <b>{entry.practiceCount}</b></span>
+                    <span className={css.statusHero}>
+                      <b>{entry.memoryCount + entry.sceneCount + entry.knowledgeCount + entry.practiceCount}</b>
+                      {' '}
+                      {t('wallTotal')}
+                    </span>
+                    <span className={css.statusLine}>
+                      {t('wallMemories')} {entry.memoryCount}
+                      {' · '}
+                      {t('wallScenes')} {entry.sceneCount}
+                      {' · '}
+                      {t('wallKnowledge')} {entry.knowledgeCount}
+                      {' · '}
+                      {t('wallPractice')} {entry.practiceCount}
+                    </span>
                   </div>
                   <span className={css.statusUpdated}>
                     {entry.lastActiveAt !== ''
@@ -242,16 +225,16 @@ export function ExperiencesWall({
                   <button
                     type="button"
                     className={css.primary}
-                    disabled={memoryBusyId !== undefined}
-                    onClick={() => { void handleMemoryAction(item.id, true) }}
+                    disabled={busy !== undefined}
+                    onClick={() => { handleMemoryAction(item.id, true) }}
                   >
-                    {memoryBusyId === item.id ? t('pending') : t('memConfirm')}
+                    {busy === actionKey('memory', item.id) ? t('pending') : t('memConfirm')}
                   </button>
                   <button
                     type="button"
                     className={css.ghost}
-                    disabled={memoryBusyId !== undefined}
-                    onClick={() => { void handleMemoryAction(item.id, false) }}
+                    disabled={busy !== undefined}
+                    onClick={() => { handleMemoryAction(item.id, false) }}
                   >
                     {t('memDelete')}
                   </button>
@@ -266,7 +249,12 @@ export function ExperiencesWall({
       <section className={css.timelineSection}>
         <header className={css.sectionHead}>
           <h3 className={css.sectionTitle}>{t('expTimelineTitle')}</h3>
-          <button type="button" className={css.ghost} disabled={refreshing} onClick={() => { void handleRefresh() }}>
+          <button
+            type="button"
+            className={css.ghost}
+            disabled={refreshing}
+            onClick={() => { void refresh(onRefresh) }}
+          >
             {refreshing ? t('pending') : t('expRefresh')}
           </button>
         </header>
@@ -278,24 +266,25 @@ export function ExperiencesWall({
         ) : (
           <ul className={css.timeline}>
             {practices.map(item => {
-              const suggested = skillsById.get(assignTarget(item.topic))
+              const suggested = skillsById.get(suggestedByTopic.get(item.topic) ?? '')
               return (
                 <li key={item.topic} className={css.timelineCard}>
                   <div className={css.timelineHead}>
                     <span className={css.timelineTopic}>{item.topic}</span>
                     <span className={css.timelineMeta}>
-                      <span className={css.sourceBadge}>{sourceLabel(t, item.source)}</span>
-                      <span className={css.timelineStatus}>{statusLabel(t, item.status)}</span>
+                      <span className={css.metaText}>{sourceLabel(t, item.source)}</span>
+                      <span className={css.metaText}>{statusLabel(t, item.status)}</span>
                     </span>
                   </div>
                   <p className={css.timelineBody}>{item.content}</p>
                   <div className={css.timelineMeta}>
                     <span className={css.timelineDate}>{item.updatedAt.slice(0, 10)}</span>
+                    {/* 待审是唯一需要用户行动的信号，因此是卡上唯一保留色块的标签 */}
                     {item.needsReview && (
                       <span className={css.reviewBadge}>{t('expNeedsReview')}</span>
                     )}
                     {suggested !== undefined && (
-                      <span className={css.suggest}>{t('expSuggest').replace('{title}', suggested.title)}</span>
+                      <span className={css.metaText}>{t('expSuggest').replace('{title}', suggested.title)}</span>
                     )}
                   </div>
                   <div className={css.timelineActions}>
@@ -303,29 +292,29 @@ export function ExperiencesWall({
                       <button
                         type="button"
                         className={css.primary}
-                        disabled={confirming !== undefined}
-                        onClick={() => { void handleConfirm(item.topic) }}
+                        disabled={busy !== undefined}
+                        onClick={() => { handleConfirm(item.topic) }}
                       >
-                        {confirming === item.topic ? t('pending') : t('expConfirm')}
+                        {busy === actionKey('confirm', item.topic) ? t('pending') : t('expConfirm')}
                       </button>
                     )}
                     {!item.needsReview && item.status !== 'assigned' && (
                       <button
                         type="button"
                         className={css.primary}
-                        disabled={assignTarget(item.topic) === '' || busyTopic !== undefined}
-                        onClick={() => { void handleAssign(item.topic) }}
+                        disabled={(suggestedByTopic.get(item.topic) ?? '') === '' || busy !== undefined}
+                        onClick={() => { handleAssign(item.topic) }}
                       >
-                        {busyTopic === item.topic ? t('pending') : t('expAssign')}
+                        {busy === actionKey('assign', item.topic) ? t('pending') : t('expAssign')}
                       </button>
                     )}
                     <button
                       type="button"
                       className={css.ghost}
-                      disabled={removing !== undefined}
-                      onClick={() => { void handleRemove(item.topic) }}
+                      disabled={busy !== undefined}
+                      onClick={() => { handleRemove(item.topic) }}
                     >
-                      {t('expRemove')}
+                      {busy === actionKey('remove', item.topic) ? t('pending') : t('expRemove')}
                     </button>
                   </div>
                 </li>

@@ -1,93 +1,223 @@
+/* 知识图谱样式。
+ *
+ * 2026-08-30 重写：原来用的 6 个变量（--dsw-surface-base / --dsw-text-primary /
+ * --dsw-text-subtle / --dsw-border-subtle / --dsw-elevation-1 / --dsw-text-secondary）
+ * **在设计系统里根本不存在** —— 真实命名是 --dsw-alias-* 前缀。
+ * 那 26 处 var() 因此 100% 走了兜底的硬编码暗色，浅色主题下整个面板是一块
+ * 纯黑孤岛。这里全部换成真实 token，图谱才真正跟随明暗主题。
+ *
+ * 节点配色取 --dsw-static-*（明暗同值）：语义色不该随主题漂移。
+ * 描边/文字/背景一律取 --dsw-alias-*（明暗自适应）。
+ */
+
 .root {
   position: relative;
   width: 100%;
   height: 100%;
   display: flex;
   flex-direction: column;
-  background: var(--dsw-surface-base, #0f172a);
+  background: var(--dsw-alias-bg-base);
   overflow: hidden;
 }
+
+/* ---------- 顶栏 ---------- */
 
 .header {
   display: flex;
   align-items: center;
   gap: 16px;
   padding: 12px 20px;
-  background: rgba(15, 23, 42, 0.95);
-  border-bottom: 1px solid var(--dsw-border-subtle, rgba(148,163,184,0.12));
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
   flex-shrink: 0;
 }
 
 .backBtn {
   background: none;
-  border: 1px solid var(--dsw-border-subtle, rgba(148,163,184,0.2));
-  color: var(--dsw-text-subtle, rgba(148,163,184,0.9));
+  border: 1px solid var(--dsw-alias-border-l2);
+  color: var(--dsw-alias-label-secondary);
   padding: 4px 12px;
   border-radius: 6px;
   cursor: pointer;
   font-size: 13px;
   white-space: nowrap;
-  transition: background 0.12s, color 0.12s;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
 }
 
 .backBtn:hover {
-  background: var(--dsw-elevation-1, rgba(30,41,59,0.8));
-  color: var(--dsw-text-primary, rgba(226,232,240,0.95));
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
 }
 
 .title {
   flex: 1;
   font-size: 15px;
   font-weight: 600;
-  color: var(--dsw-text-primary, rgba(226,232,240,0.95));
+  color: var(--dsw-alias-label-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-/* 顶部搜索框 */
 .searchInput {
   flex: none;
   width: 200px;
   padding: 5px 12px;
   border-radius: 8px;
-  border: 1px solid var(--dsw-border-subtle, rgba(148,163,184,0.25));
-  background: rgba(30, 41, 59, 0.7);
-  color: var(--dsw-text-primary, rgba(226,232,240,0.95));
+  border: 1px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
   font-size: 12.5px;
   outline: none;
-  transition: border-color 0.12s, background 0.12s;
+  transition: border-color 0.12s;
 }
 
 .searchInput::placeholder {
-  color: var(--dsw-text-subtle, rgba(148,163,184,0.5));
+  color: var(--dsw-alias-label-tertiary);
 }
 
 .searchInput:focus {
-  border-color: rgba(59,130,246,0.6);
-  background: rgba(30, 41, 59, 0.95);
+  border-color: var(--dsw-alias-state-business-primary);
 }
 
 .stats {
   font-size: 12px;
-  color: var(--dsw-text-subtle, rgba(148,163,184,0.7));
+  color: var(--dsw-alias-label-tertiary);
   white-space: nowrap;
 }
 
-/* 底部操作提示 */
-.hint {
-  position: absolute;
-  bottom: 14px;
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: 11px;
-  color: var(--dsw-text-subtle, rgba(148,163,184,0.45));
+/* ---------- 主体：画布 + 详情右栏（挤压式，不是浮层） ---------- */
+
+.body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+/* 画布容器：所有浮层控件（图例 / 缩放 / 提示）都相对它定位，
+   所以面板出现时它们跟着画布一起收缩，不会跑到面板底下。 */
+.canvasWrap {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* ---------- 画布 ---------- */
+
+.svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+  /* 中心一圈极淡的品牌色，给 3D 空间一点纵深暗示；跟随主题而非写死深蓝。 */
+  background: radial-gradient(
+    ellipse at center,
+    color-mix(in srgb, var(--dsw-alias-state-business-primary) 8%, transparent) 0%,
+    transparent 70%
+  );
+}
+
+.svg:active {
+  cursor: grabbing;
+}
+
+/* 连线层整体不参与指针事件：命中判定完全由 pickNode 在 svg 层算，
+   让 DOM 也去响应线条只会和它打架。 */
+.edges {
+  pointer-events: none;
+}
+
+/* 连线：主题化描边颜色，透明度由渲染层按权重/深度给（stroke-opacity 属性）。 */
+.edge {
+  stroke: var(--dsw-alias-border-l3);
+}
+
+/* 技能簇中心（聚合标记） */
+.rootMark circle {
+  fill: var(--dsw-static-blue-800);
+  fill-opacity: 0.14;
+  stroke: var(--dsw-static-blue-500);
+  stroke-opacity: 0.45;
+}
+
+.rootMark text {
+  fill: var(--dsw-alias-label-secondary);
   pointer-events: none;
   user-select: none;
-  white-space: nowrap;
 }
 
-/* 视角控制按钮组（右下角） */
+/* ---------- 节点 ---------- */
+
+.node {
+  cursor: pointer;
+}
+
+/* 三种语义色：明暗同值，保证「知识=蓝 / 记忆=绿 / 实操=橙」的语义不随主题漂移。 */
+.toneKnowledge {
+  --node-fill: var(--dsw-static-blue-500);
+  --node-stroke: var(--dsw-static-blue-800);
+}
+
+.toneMemory {
+  --node-fill: var(--dsw-static-green-500);
+  --node-stroke: var(--dsw-static-green-900);
+}
+
+.toneScene {
+  --node-fill: var(--dsw-static-amber-500);
+  --node-stroke: var(--dsw-static-amber-900);
+}
+
+/* 外发光用节点自身色，搜索命中时换成琥珀色。 */
+.glow {
+  fill: var(--node-fill);
+  opacity: 0.32;
+}
+
+.glowHit {
+  fill: var(--dsw-static-amber-400);
+  opacity: 0.4;
+}
+
+.ball {
+  fill: var(--node-fill);
+  stroke: var(--node-stroke);
+  transition: stroke-width 0.12s;
+}
+
+.ballHit {
+  fill: var(--node-fill);
+  stroke: var(--dsw-static-amber-400);
+  transition: stroke-width 0.12s;
+}
+
+.ballSelected {
+  fill: var(--node-fill);
+  stroke: var(--dsw-alias-label-primary);
+  transition: stroke-width 0.12s;
+}
+
+/* 高光：固定在左上，制造球体感 */
+.spec {
+  fill: rgba(255, 255, 255, 0.35);
+  pointer-events: none;
+}
+
+/* 标签：paint-order 让描边画在填充之下，等于给文字垫了一圈底色，
+   压在连线上也读得清（原来没有这层，密集处一片糊）。 */
+.label {
+  fill: var(--dsw-alias-label-secondary);
+  stroke: var(--dsw-alias-bg-base);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+  paint-order: stroke fill;
+  pointer-events: none;
+  user-select: none;
+  transition: font-size 0.12s;
+}
+
+/* ---------- 浮层控件 ---------- */
+
 .viewControls {
   position: absolute;
   bottom: 16px;
@@ -102,9 +232,9 @@
   width: 30px;
   height: 30px;
   border-radius: 8px;
-  border: 1px solid var(--dsw-border-subtle, rgba(148,163,184,0.2));
-  background: rgba(15, 23, 42, 0.85);
-  color: var(--dsw-text-primary, rgba(226,232,240,0.9));
+  border: 1px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
   font-size: 16px;
   line-height: 1;
   cursor: pointer;
@@ -115,77 +245,105 @@
 }
 
 .viewBtn:hover {
-  background: rgba(30, 41, 59, 0.95);
-  border-color: rgba(59,130,246,0.5);
+  background: var(--dsw-alias-interactive-bg-hover);
+  border-color: var(--dsw-alias-state-business-primary);
 }
 
-.svg {
-  flex: 1;
-  width: 100%;
-  height: 100%;
-  cursor: grab;
-  background: radial-gradient(ellipse at center, rgba(30,58,95,0.3) 0%, transparent 70%);
-}
-
-.svg:active {
-  cursor: grabbing;
-}
-
-/* 右侧固定详情面板 */
-.detailPanel {
+.hint {
   position: absolute;
-  top: 12px;
-  right: 12px;
-  bottom: 12px;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
+  pointer-events: none;
+  user-select: none;
+  white-space: nowrap;
+}
+
+/* ---------- 详情面板 ---------- */
+
+/* 挤压式右栏：**不再浮在画布上**。做成 flex 兄弟节点后，画布自动让出这块宽度，
+   聚焦的节点落在剩余画布正中，任何情况下都不会被面板压住。
+   （原方案是 absolute + 半透明 + backdrop-filter，压住了右边一片节点。）
+
+   注意：不再需要 backdrop-filter —— 面板背后已经没有内容，模糊是纯浪费。
+   本仓 CSS 压缩器还会吞掉带 -webkit- 前缀的标准属性，所以只写无前缀版。 */
+.detail {
+  flex: none;
   width: 300px;
-  background: rgba(15, 23, 42, 0.97);
-  border: 1px solid var(--dsw-border-subtle, rgba(148,163,184,0.18));
+  min-width: 200px;
+  max-width: 42%;
+  margin: 12px;
+  background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 12px;
   padding: 16px;
-  box-shadow: 0 8px 32px rgba(0,0,0,0.55);
   display: flex;
   flex-direction: column;
   gap: 10px;
   overflow: hidden;
-  z-index: 6;
+  animation: detailIn 160ms ease-out;
 }
 
-.detailHeader {
+/* 面板是挂载即出现，没有「从 A 到 B」的 transition 起点，所以用 keyframes。 */
+@keyframes detailIn {
+  from {
+    opacity: 0;
+    transform: translateX(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.detailHead {
   display: flex;
   align-items: center;
   justify-content: space-between;
 }
 
-.detailTitle {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--dsw-text-primary, rgba(226,232,240,0.95));
-  line-height: 1.4;
-  max-height: 42px;
-  overflow: hidden;
-}
-
+/* 类型徽标：三种配色由 chipXxx 给出。
+   原来靠 `.detailType:has(+ *)` 区分颜色，而它后面永远跟着关闭按钮，
+   选择器恒真 → 徽标恒为绿色，另外两种配色是从未生效的死代码。 */
 .detailType {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-size: 11px;
   font-weight: 600;
-  text-transform: uppercase;
   letter-spacing: 0.06em;
   padding: 2px 8px;
   border-radius: 4px;
-  background: rgba(59,130,246,0.2);
-  color: #60a5fa;
+  color: var(--dsw-alias-label-primary);
 }
 
-.detailType:has(+ *) {
-  background: rgba(16,185,129,0.2);
-  color: #34d399;
+.chipDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--node-fill);
+  flex-shrink: 0;
+}
+
+.chipKnowledge {
+  background: color-mix(in srgb, var(--dsw-static-blue-500) 20%, transparent);
+}
+
+.chipMemory {
+  background: color-mix(in srgb, var(--dsw-static-green-500) 20%, transparent);
+}
+
+.chipScene {
+  background: color-mix(in srgb, var(--dsw-static-amber-500) 20%, transparent);
 }
 
 .detailClose {
   background: none;
   border: none;
-  color: var(--dsw-text-subtle, rgba(148,163,184,0.6));
+  color: var(--dsw-alias-label-tertiary);
   cursor: pointer;
   font-size: 14px;
   line-height: 1;
@@ -193,13 +351,23 @@
 }
 
 .detailClose:hover {
-  color: var(--dsw-text-primary, rgba(226,232,240,0.9));
+  color: var(--dsw-alias-label-primary);
 }
 
-.detailContent {
+.detailTitle {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+  line-height: 1.4;
+  max-height: 42px;
+  overflow: hidden;
+}
+
+.detailBody {
   font-size: 13px;
   line-height: 1.6;
-  color: var(--dsw-text-secondary, rgba(203,213,225,0.9));
+  color: var(--dsw-alias-label-secondary);
   margin: 0;
   flex: 1;
   overflow-y: auto;
@@ -212,39 +380,39 @@
   flex-wrap: wrap;
   gap: 6px;
   font-size: 11px;
-  color: var(--dsw-text-subtle, rgba(148,163,184,0.6));
+  color: var(--dsw-alias-label-tertiary);
 }
 
 .detailMeta span {
-  background: rgba(30,41,59,0.8);
+  background: var(--dsw-alias-bg-layer-1);
   padding: 2px 6px;
   border-radius: 4px;
 }
 
-/* 图例 */
+/* ---------- 图例 / 类型筛选 ---------- */
+
 .legend {
   position: absolute;
   top: 12px;
   left: 12px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  background: rgba(15, 23, 42, 0.85);
-  border: 1px solid var(--dsw-border-subtle, rgba(148,163,184,0.12));
+  gap: 2px;
+  background: color-mix(in srgb, var(--dsw-alias-bg-layer-2) 82%, transparent);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 8px;
-  padding: 6px 8px;
+  padding: 6px;
   z-index: 5;
 }
 
-.legendItem,
-.legendItemActive,
-.legendAll,
-.legendAllActive {
+.legendBtn,
+.legendOn {
   display: flex;
   align-items: center;
   gap: 8px;
   font-size: 12px;
-  color: var(--dsw-text-subtle, rgba(148,163,184,0.8));
+  color: var(--dsw-alias-label-secondary);
   background: none;
   border: none;
   border-radius: 6px;
@@ -254,16 +422,14 @@
   transition: background 0.12s, color 0.12s;
 }
 
-.legendItem:hover,
-.legendAll:hover {
-  background: rgba(30, 41, 59, 0.8);
-  color: var(--dsw-text-primary, rgba(226,232,240,0.95));
+.legendBtn:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
 }
 
-.legendItemActive,
-.legendAllActive {
-  background: rgba(59, 130, 246, 0.25);
-  color: var(--dsw-text-primary, rgba(226,232,240,0.95));
+.legendOn {
+  background: var(--dsw-alias-interactive-bg-active);
+  color: var(--dsw-alias-label-primary);
 }
 
 .legendDot {
@@ -271,4 +437,11 @@
   height: 10px;
   border-radius: 50%;
   flex-shrink: 0;
+  background: var(--node-fill);
+}
+
+.legendCount {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  color: var(--dsw-alias-label-tertiary);
 }
