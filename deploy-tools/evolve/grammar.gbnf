@@ -1,0 +1,34 @@
+# GBEF (GBNF) —— 进化引擎输出语法约束。
+#
+# 为什么需要它：M4 用的是 Qwen3.8-27B 的 UD-IQ1_S（1bit 量化）。1bit 崩的是
+# **内容质量**，不是格式——但只要格式一崩，下游解析就会抛异常，整条进化链断掉，
+# 而且断在没人看的地方。GBNF 把"格式必须合法"这件事从模型能力里拿走，
+# 交给解码器保证，模型只剩"填什么内容"这一件事要操心。
+#
+# 这是三架构里"弱模型也能当引擎"的第一重补偿：
+#   ① GBNF 保格式 ② 任务收窄成有限参数空间填空 ③ golden set + 人工双门拦垃圾内容。
+#
+# 允许输出的 shape：
+#   [{"kind":"patch-skill","target":"<scope>","id":"skill:<scope>",
+#     "details":"<中文说明>","rationale":"<为什么>"}, ...]
+#
+# kind 刻意只允许建设性类型——**引擎永远不能提议 add-rule（冻结）**。
+# 老系统唯一的提议类型就是冻结，结果"崩溃越多→冻结越多→系统越瘫"。
+# 这条限制在语法层面写死，弱模型就算发疯也吐不出 add-rule。
+
+root ::= ws "[" ws ( proposal ( ws "," ws proposal )* )? ws "]" ws
+
+proposal ::= "{" ws
+  "\"kind\"" ws ":" ws kind ws "," ws
+  "\"target\"" ws ":" ws string ws "," ws
+  "\"id\"" ws ":" ws string ws "," ws
+  "\"details\"" ws ":" ws string ws "," ws
+  "\"rationale\"" ws ":" ws string
+ws "}"
+
+# 建设性类型白名单：只改技能/知识/提示，绝不冻结行为、绝不碰代码。
+kind ::= "\"patch-skill\"" | "\"add-skill\"" | "\"add-case\"" | "\"add-prompt\""
+
+string ::= "\"" ( [^"\\] | "\\" ["\\/bfnrt] )* "\""
+
+ws ::= [ \t\n\r]*
