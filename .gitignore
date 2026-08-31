@@ -1,4 +1,4 @@
-# 渚濊禆涓庢瀯寤轰骇鐗?
+# 依赖与构建产物
 node_modules/
 **/node_modules/
 .pnpm-store/
@@ -8,12 +8,12 @@ dist/
 *.tsbuildinfo
 diechi-harness/.pnpm-store/
 
-# 鏈湴鏁版嵁涓庢晱鎰熶俊鎭紙鍑嵁/浼氳瘽/缂撳瓨锛岀粷涓嶅叆搴擄級
+# 本地数据与敏感信息（凭据/会话/缓存，绝不入库）
 diechi-home/
 logs/
 *.log
 
-# Windows 鏈湴杩愯璧勪骇锛堜笉闅忎粨搴撹縼绉伙級
+# Windows 本地运行资产（不随仓库迁移）
 *.exe
 *.dll
 *.pdb
@@ -22,25 +22,25 @@ logs/
 models/
 vllm-env/
 
-# 褰掓。涓庡弬鑰冨熀绾?
-_褰掓。鑴氭湰/
-_鏁寸悊褰掓。/
+# 归档与参考基线
+_归档脚本/
+_整理归档/
 deepseek-harness-base/
 
-# 鏈湴鐜
+# 本地环境
 .env
 .env.local
 CLAUDE.local.md
 
-# 鏈湴 agent 绗旇/鎶�鑳芥暟鎹紙涓嶅叆搴擄級
+# 本地 agent 笔记/技能数据（不入库）
 **/.agents/
 **/.claude/
-铦剁繀APP 鍚姩鏃ュ織.txt
+蝶翅APP 启动日志.txt
 *.exe.bak
 *.bak
 *.bak-*
 
-# 宸插綊妗ｇ殑 v1.0 鏃х粨鏋勶紙2026-08-22 褰掓。鑷? _娓呯悊褰掓。\锛?
+# 已归档的 v1.0 旧结构（2026-08-22 归档至 _清理归档\）
 /apps/
 /packages/
 /diechi-app/
@@ -58,5 +58,10 @@ __pycache__/
 *.pyc
 *.orig-modular-bak
 
-# 涓婃父鍏嬮殕锛坈angjie-skill锛屾湰鍦板弬鑰冿紝涓嶆彁浜ら伩鍏嶅祵濂? git锛?
+# .NET 构建产物（不入库）
+bin/
+obj/
+*.user
+
+# 上游克隆（cangjie-skill，本地参考，不提交避免嵌套 git）
 vendor/
