@@ -2,14 +2,14 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
-using System.Net.Sockets;
 using System.Text;
 using System.Threading;
 using System.Windows.Forms;
 
 class DiechiLauncher
 {
-    static string logFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "蝶翅APP 启动日志.txt");
+    // 日志放在启动器自身目录，便于用户查看。
+    static string logFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "DiechiLauncher.log");
 
     static void Log(string message)
     {
@@ -18,12 +18,12 @@ class DiechiLauncher
     }
 
     static void SafeTitle(string t) { try { Console.Title = t; } catch { } }
-    static void SafeWrite(string s) { try { Console.Write(s); } catch { } }
     static void SafeWriteLine(string s) { try { Console.WriteLine(s); } catch { } }
     static void SafeColor(ConsoleColor c) { try { Console.ForegroundColor = c; } catch { } }
     static void SafeReset() { try { Console.ResetColor(); } catch { } }
     static void SafeReadKey() { try { Console.ReadKey(); } catch { Thread.Sleep(3000); } }
     static void ShowError(string msg) { try { MessageBox.Show(msg, "蝶翅APP 启动器", MessageBoxButtons.OK, MessageBoxIcon.Error); } catch { } }
+    static void ShowInfo(string msg) { try { MessageBox.Show(msg, "蝶翅APP 启动器", MessageBoxButtons.OK, MessageBoxIcon.Information); } catch { } }
 
     static int Main(string[] args)
     {
@@ -36,124 +36,71 @@ class DiechiLauncher
         SafeReset();
         SafeWriteLine("");
 
-        string harnessPath = @"D:\桌面\振翅科技\蝶翅-app\diechi-harness";
-        string dataHome = @"D:\桌面\振翅科技\蝶翅-app\diechi-home";
-        string pnpmPath = @"C:\Users\wang\AppData\Roaming\npm\pnpm.cmd";
+        // 启动器放在蝶翅-app根目录或deploy-tools目录均可：以自身目录为基准。
+        string baseDir = AppDomain.CurrentDomain.BaseDirectory;
+        string startCmd = Path.Combine(baseDir, "deploy-tools", "start-diechi.cmd");
+        if (!File.Exists(startCmd))
+        {
+            // 也可能启动器本身就放在 deploy-tools 里（源码/编译输出位置）。
+            startCmd = Path.Combine(baseDir, "..", "start-diechi.cmd");
+            startCmd = Path.GetFullPath(startCmd);
+        }
         int port = 3090;
 
         try
         {
-            Log("启动器开始运行");
-            SafeWriteLine("正在停止占用端口 " + port + " 的旧进程...");
-            HashSet<int> portPids = FindPidsOnPort(port);
-            foreach (Process p in Process.GetProcessesByName("node"))
-            {
-                if (portPids.Contains(p.Id)) { try { p.Kill(); p.WaitForExit(3000); } catch { } }
-            }
-            SafeWriteLine("旧进程已停止");
-            Log("旧进程已停止");
+            Log("启动器开始运行，baseDir=" + baseDir);
 
-            int visionPort = 8080;
-            string visionPython = @"D:\vllm-env\Scripts\python.exe";
-            string visionScript = @"D:\桌面\振翅科技\蝶翅-app\deploy-tools\vision-server.py";
-            SafeWriteLine("正在停止占用端口 " + visionPort + " 的旧视觉服务...");
-            HashSet<int> visionPids = FindPidsOnPort(visionPort);
-            foreach (Process p in Process.GetProcessesByName("python"))
+            if (!File.Exists(startCmd))
             {
-                if (visionPids.Contains(p.Id)) { try { p.Kill(); p.WaitForExit(3000); } catch { } }
+                throw new FileNotFoundException("找不到启动脚本: " + startCmd + "\n请确认本启动器位于 蝶翅-app 根目录或其 deploy-tools 子目录。");
             }
-            if (File.Exists(visionPython) && File.Exists(visionScript))
-            {
-                SafeWriteLine("正在启动本地视觉+语音服务...");
-                Log("启动视觉服务: " + visionPython + " " + visionScript);
-                ProcessStartInfo vpsi = new ProcessStartInfo
-                {
-                    FileName = visionPython,
-                    Arguments = "\"" + visionScript + "\" " + visionPort,
-                    WorkingDirectory = @"D:\桌面\振翅科技\蝶翅-app\deploy-tools",
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                };
-                vpsi.EnvironmentVariables["CUDA_PATH"] = @"D:\cuda-root";
-                vpsi.EnvironmentVariables["CUDA_LIB_PATH"] = @"D:\cuda-root\bin";
-                try
-                {
-                    Process vproc = Process.Start(vpsi);
-                    Log("视觉服务进程ID: " + vproc.Id);
-                }
-                catch (Exception ve) { Log("视觉服务启动失败: " + ve.Message); }
-            }
-            else
-            {
-                SafeWriteLine("警告: 未找到视觉服务文件，跳过（识别/视频功能不可用）");
-                Log("视觉服务文件缺失，跳过");
-            }
+            Log("使用启动脚本: " + startCmd);
 
-            if (!Directory.Exists(harnessPath)) throw new Exception("Harness路径不存在: " + harnessPath);
-            if (!Directory.Exists(dataHome)) throw new Exception("数据目录不存在: " + dataHome);
+            // 若服务已在运行，直接打开浏览器，避免重复启动。
+            if (IsPortListening(port))
+            {
+                SafeWriteLine("服务已在端口 " + port + " 运行，直接打开浏览器...");
+                Log("服务已运行，直接打开浏览器");
+                OpenBrowser(port);
+                SafeWriteLine("按任意键关闭窗口...");
+                SafeReadKey();
+                return 0;
+            }
 
             SafeWriteLine("正在启动 蝶翅APP...");
-            Log("当前目录: " + harnessPath);
-            Log("数据目录: " + dataHome);
-            Log("启动命令: " + pnpmPath + " dsh web --port " + port);
+            SafeWriteLine("启动脚本: " + startCmd);
+            Log("启动脚本: " + startCmd);
 
+            // 调用 start-diechi.cmd，由它统一负责：
+            //  - 停止旧进程
+            //  - 启动 8081 lazy proxy（本地 Qwen3.8）
+            //  - 启动 3090 主服务
+            //  - 打开浏览器
             ProcessStartInfo psi = new ProcessStartInfo
             {
                 FileName = "cmd.exe",
-                Arguments = "/c \"" + pnpmPath + "\" dsh web --port " + port,
-                WorkingDirectory = harnessPath,
-                UseShellExecute = false,
-                CreateNoWindow = true
+                Arguments = "/c \"\"\"" + startCmd + "\"\"\"",
+                WorkingDirectory = Path.GetDirectoryName(startCmd),
+                UseShellExecute = true,   // 显示 cmd 窗口，让用户看到启动过程
+                CreateNoWindow = false
             };
-            psi.EnvironmentVariables["DSH_HOME"] = dataHome;
-            string npmDir = @"C:\Users\wang\AppData\Roaming\npm";
-            string currentPath = psi.EnvironmentVariables["PATH"];
-            psi.EnvironmentVariables["PATH"] = npmDir + ";" + (currentPath == null ? "" : currentPath);
-            Process proc = Process.Start(psi);
-            SafeWriteLine("进程已启动 (PID: " + proc.Id + ")");
-            Log("进程ID: " + proc.Id);
+            Process.Start(psi);
 
-            SafeWriteLine("等待服务启动（最多4分钟，首次 tsx 编译较慢）...");
-            bool ready = false;
-            for (int i = 0; i < 240; i++)
-            {
-                Thread.Sleep(1000);
-                try
-                {
-                    System.Net.HttpWebRequest req = (System.Net.HttpWebRequest)System.Net.WebRequest.Create("http://127.0.0.1:" + port + "/");
-                    req.Timeout = 1500;
-                    using (System.Net.HttpWebResponse resp = (System.Net.HttpWebResponse)req.GetResponse())
-                    {
-                        if ((int)resp.StatusCode == 200) { ready = true; break; }
-                    }
-                }
-                catch { }
-            }
+            SafeWriteLine("启动脚本已运行，请在弹出的命令行窗口中查看进度。");
+            Log("启动脚本已运行");
 
             SafeWriteLine("");
             SafeColor(ConsoleColor.Green);
             SafeWriteLine("==================================================");
-            SafeWriteLine("  启动" + (ready ? "完成！" : "超时，请查看日志"));
+            SafeWriteLine("  启动脚本已启动");
             SafeWriteLine("==================================================");
             SafeReset();
             SafeWriteLine("");
             SafeWriteLine("访问地址: http://127.0.0.1:" + port);
             SafeWriteLine("日志文件: " + logFile);
             SafeWriteLine("");
-
-            Log(ready ? "启动完成" : "启动超时（240 秒未就绪）");
-            Log("访问地址: http://127.0.0.1:" + port);
-
-            if (ready)
-            {
-                try { Process.Start(new ProcessStartInfo { FileName = "http://127.0.0.1:" + port, UseShellExecute = true }); } catch { }
-            }
-            else
-            {
-                ShowError("蝶翅APP 240 秒内未能启动，请查看日志:\n" + logFile);
-            }
-
-            SafeWriteLine("按任意键关闭窗口...");
+            SafeWriteLine("按任意键关闭本窗口（不会停止服务）...");
             SafeReadKey();
             return 0;
         }
@@ -170,36 +117,45 @@ class DiechiLauncher
         }
     }
 
-    static HashSet<int> FindPidsOnPort(int port)
+    static bool IsPortListening(int port)
     {
-        HashSet<int> pids = new HashSet<int>();
         try
         {
-            ProcessStartInfo psi = new ProcessStartInfo("netstat", "-ano")
+            using (Process p = new Process())
             {
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                CreateNoWindow = true
-            };
-            using (Process p = Process.Start(psi))
-            {
+                p.StartInfo.FileName = "netstat";
+                p.StartInfo.Arguments = "-ano";
+                p.StartInfo.UseShellExecute = false;
+                p.StartInfo.RedirectStandardOutput = true;
+                p.StartInfo.CreateNoWindow = true;
+                p.Start();
                 string output = p.StandardOutput.ReadToEnd();
+                p.WaitForExit(5000);
+                string needle = ":" + port;
                 foreach (string line in output.Split('\n'))
                 {
-                    if (line.Contains(":" + port))
-                    {
-                        string[] parts = line.Split(new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
-                        if (parts.Length > 0)
-                        {
-                            int pid;
-                            if (int.TryParse(parts[parts.Length - 1], out pid))
-                                pids.Add(pid);
-                        }
-                    }
+                    if (line.Contains(needle) && line.Contains("LISTENING"))
+                        return true;
                 }
             }
         }
+        catch (Exception ex)
+        {
+            Log("端口检查异常: " + ex.Message);
+        }
+        return false;
+    }
+
+    static void OpenBrowser(int port)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "http://127.0.0.1:" + port,
+                UseShellExecute = true
+            });
+        }
         catch { }
-        return pids;
     }
 }

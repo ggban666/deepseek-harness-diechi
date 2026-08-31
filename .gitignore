@@ -1,4 +1,4 @@
-# 依赖与构建产物
+# 依赖与构建产�?
 node_modules/
 **/node_modules/
 .pnpm-store/
@@ -15,10 +15,14 @@ logs/
 
 # Windows 本地运行资产（不随仓库迁移）
 *.exe
+*.dll
+*.pdb
+*.deps.json
+*.runtimeconfig.json
 models/
 vllm-env/
 
-# 归档与参考基线
+# 归档与参考基�?
 _归档脚本/
 _整理归档/
 deepseek-harness-base/
@@ -36,7 +40,7 @@ CLAUDE.local.md
 *.bak
 *.bak-*
 
-# 已归档的 v1.0 旧结构（2026-08-22 归档至 _清理归档\）
+# 已归档的 v1.0 旧结构（2026-08-22 归档�? _清理归档\�?
 /apps/
 /packages/
 /diechi-app/
@@ -54,5 +58,5 @@ __pycache__/
 *.pyc
 *.orig-modular-bak
 
-# 上游克隆（cangjie-skill，本地参考，不提交避免嵌套 git）
+# 上游克隆（cangjie-skill，本地参考，不提交避免嵌�? git�?
 vendor/
