@@ -16,6 +16,8 @@
 import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/cordis-plugin-loader'
+import z from '@deepseek-ai/schemastery'
+import { settingsNamespace } from '@deepseek-ai/dsh-settings'
 import { dshHomeDir } from '@deepseek-ai/dsh-host-skill-store'
 import { EvolveDb } from './db.ts'
 import { EvolutionService, type SupervisorLike } from './service.ts'
@@ -95,20 +97,23 @@ export function apply(ctx: Context): void {
   const home = dshHomeDir()
 
   // 注册 evolution 配置命名空间（dsh-settings 必须先 register 才能 get）。
-  // schema 是普通函数 (merged) => resolved；框架会把它套在 settings.yaml 的 `evolution:` 段上。
+  // schema 必须是 schemastery Schema（有 .toJSON()），否则 settings.describe() 会因
+  // registration.schema.toJSON is not a function 整体崩溃，连带 ui-onboarding 等所有
+  // 命名空间都读不到 → 前端反复弹「内测声明」且「暂时无法保存确认状态」。
+  // 默认值用 .default()，替代原来手写的函数式回落逻辑。
   const settingsSvc = ctx.get('settings') as unknown as {
     get(ns: string): unknown
-    register(ns: string, schema: (v?: Record<string, unknown>) => Record<string, unknown>): unknown
+    register(ns: string, schema: unknown): unknown
   }
-  const evolutionSchema = (v: Record<string, unknown> = {}) => ({
-    engineIntervalSec: typeof v.engineIntervalSec === 'number' && v.engineIntervalSec > 0 ? v.engineIntervalSec : 3600,
-    cleanupIntervalSec: typeof v.cleanupIntervalSec === 'number' && v.cleanupIntervalSec > 0 ? v.cleanupIntervalSec : 86400,
-    // 自动 apply 开关：off / safe-only / all（非法值回落 off）。
-    autoApply: (v.autoApply === 'safe-only' || v.autoApply === 'all') ? v.autoApply : 'off',
-    autoApplyIntervalSec: typeof v.autoApplyIntervalSec === 'number' && v.autoApplyIntervalSec > 0 ? v.autoApplyIntervalSec : 120,
+  const EvolutionSchema = z.object({
+    engineIntervalSec: z.number().default(3600),
+    cleanupIntervalSec: z.number().default(86400),
+    // 自动 apply 开关：off / safe-only / all。
+    autoApply: z.union([z.const('off'), z.const('safe-only'), z.const('all')]).default('off'),
+    autoApplyIntervalSec: z.number().default(120),
   })
   if (settingsSvc.get('evolution') === undefined) {
-    try { settingsSvc.register('evolution', evolutionSchema) } catch { /* 重复 mount 时忽略 */ }
+    try { settingsSvc.register(settingsNamespace('evolution'), EvolutionSchema) } catch { /* 重复 mount 时忽略 */ }
   }
   // 构造 EvolutionService 前先解析自动 apply 模式，传给它。
   const rawEvo = (settingsSvc.get('evolution') as Record<string, unknown> | undefined) ?? {}
