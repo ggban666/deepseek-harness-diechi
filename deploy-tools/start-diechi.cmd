@@ -13,10 +13,26 @@ set "URL=http://127.0.0.1:3090/"
 set "PORT=3090"
 set "QWEN38_PORT=8081"
 set "QWEN38_MODEL=D:\桌面\振翅科技\models\Qwen3.8-27B-UD-IQ1_S\Qwen3.8-27B-UD-IQ1_S.gguf"
-rem 在当前环境没有 node 命令时，回退到 WorkBuddy 托管的 Node。
-set "NODE_EXE=C:\Users\wang\.workbuddy\binaries\node\versions\22.22.2-2\node.exe"
-if not exist "%NODE_EXE%" set "NODE_EXE=node"
-set "PYTHON_EXE=C:\Users\wang\.workbuddy\binaries\python\versions\3.13.12\python.exe"
+rem 优先使用项目目录 vendor/ 下的 Node/Python（junction 到 WorkBuddy 托管运行时），
+rem 保持项目自包含在 D 盘；若 vendor 缺失则回退到系统 PATH，最后再试 WorkBuddy 路径。
+set "NODE_EXE=%~dp0..\vendor\node\node.exe"
+if not exist "%NODE_EXE%" (
+  where node >nul 2>&1
+  if errorlevel 1 (
+    set "NODE_EXE=C:\Users\wang\.workbuddy\binaries\node\versions\22.22.2-2\node.exe"
+  ) else (
+    for /f "delims=" %%i in ('where node') do set "NODE_EXE=%%i"
+  )
+)
+set "PYTHON_EXE=%~dp0..\vendor\python\python.exe"
+if not exist "%PYTHON_EXE%" (
+  where python >nul 2>&1
+  if errorlevel 1 (
+    set "PYTHON_EXE=C:\Users\wang\.workbuddy\binaries\python\versions\3.13.12\python.exe"
+  ) else (
+    for /f "delims=" %%i in ('where python') do set "PYTHON_EXE=%%i"
+  )
+)
 echo.
 echo Diechi App (蝶翅APP)
 echo Open: %URL%
