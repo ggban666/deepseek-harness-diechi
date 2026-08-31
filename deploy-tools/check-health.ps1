@@ -8,7 +8,7 @@ try {
   $body = '{"type":"client-request","rpcId":"hc-1","method":"llm.providers","payload":{}}'
   $r = Invoke-RestMethod -Uri "http://127.0.0.1:3090/api/llm.providers" -Method Post -Body $body -ContentType "application/json" -TimeoutSec 8
   $active = @($r.result.value.providers | Where-Object { $_.active -eq $true })
-  foreach ($need in @('deepseek-official','local-vision','abl','agnes')) {
+  foreach ($need in @('minmax','local-vision','abl','agnes','qwen38')) {
     if ($active.provider -notcontains $need) { $errs.Add("供应商缺失: " + $need + "（可能 DSH_HOME 起错，检查启动脚本）") }
   }
 } catch { $errs.Add("3090 供应商查询失败: " + $_.Exception.Message) }
