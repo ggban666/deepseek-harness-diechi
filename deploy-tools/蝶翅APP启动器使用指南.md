@@ -15,8 +15,8 @@
 
 - Windows 10/11 x64
 - [.NET 8 Windows Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0)（框架依赖版本，首次使用需安装一次）
-- Node.js 22+ 和 Python 3.13+（本项目通过 `vendor/node` 和 `vendor/python` 目录 junction 引用，保持全部文件在 D 盘）
-- 已正确放置模型文件：`models/Qwen3.8-27B-UD-IQ1_S/Qwen3.8-27B-UD-IQ1_S.gguf`
+- Node.js 22+ 和 Python 3.13+（本项目通过 `vendor/node` 和 `vendor/python` 目录 junction 引用，保持运行依赖在 `蝶翅-app` 文件夹内）
+- 已正确放置模型文件：`models/Qwen3.8-27B-UD-IQ1_S/Qwen3.8-27B-UD-IQ1_S.gguf`（项目根目录的 `models/` 会被链接到 `蝶翅-app/models/`）
 
 ## 首次准备（vendor 链接）
 
@@ -26,7 +26,7 @@
 setup-vendor.cmd
 ```
 
-它会在 `vendor/` 下创建 `node` 和 `python` 两个 junction，分别指向 WorkBuddy 托管的运行时。这样 `start-diechi.cmd` 就不依赖 `C:\Users\wang\.workbuddy` 这类绝对路径。
+它会在 `vendor/` 下创建 `node` 和 `python` 两个 junction，分别指向 WorkBuddy 托管的运行时；若项目根目录已存在 `models/`，还会创建 `蝶翅-app/models/` junction。这样 `start-diechi.cmd` 就不依赖 `C:\Users\%USERNAME%\.workbuddy` 这类绝对路径。
 
 > `vendor/` 目录本身被 `.gitignore` 忽略，不会进入 git。别人下载后需要先运行一次 `setup-vendor.cmd`（或自行把 node/python 放到 `vendor/node`、`vendor/python`）。
 

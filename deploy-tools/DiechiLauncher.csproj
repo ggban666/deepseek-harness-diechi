@@ -11,4 +11,7 @@
     <SelfContained>false</SelfContained>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
   </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="DiechiLauncher.cs" />
+  </ItemGroup>
 </Project>

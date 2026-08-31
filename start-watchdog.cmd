@@ -12,8 +12,23 @@ rem
 rem  停止：直接关窗口，或 Ctrl+C（不会杀掉已拉起的 DSH）。
 rem ============================================================
 
-set "DSH_HOME=D:\桌面\振翅科技\蝶翅-app\diechi-home"
-set "DIECHI_HARNESS_PATH=D:\桌面\振翅科技\蝶翅-app\diechi-harness"
+rem 以本脚本所在目录（蝶翅-app 根目录）为基准
+set "APP_ROOT=%~dp0"
+set "DSH_HOME=%APP_ROOT%diechi-home"
+set "DIECHI_HARNESS_PATH=%APP_ROOT%diechi-harness"
+set "NODE_EXE=%APP_ROOT%vendor\node\node.exe"
+
+if not exist "%NODE_EXE%" (
+  where node >nul 2>&1
+  if errorlevel 1 (
+    echo [watchdog] ERROR: 找不到项目内置 Node（%NODE_EXE%），也找不到系统 Node。
+    echo [watchdog] 请先运行 setup-vendor.cmd。
+    pause
+    exit /b 1
+  ) else (
+    for /f "delims=" %%i in ('where node') do set "NODE_EXE=%%i"
+  )
+)
 
 rem 可按需调整（去掉 rem 生效）：
 rem set "WATCHDOG_PORT=3090"
@@ -31,9 +46,10 @@ if not exist "%DIECHI_HARNESS_PATH%\apps\cli\lib\bin.js" (
 
 echo [watchdog] DSH_HOME = %DSH_HOME%
 echo [watchdog] 信号文件 = %DSH_HOME%\.watchdog\update.signal
+echo [watchdog] NODE_EXE = %NODE_EXE%
 echo [watchdog] 按 Ctrl+C 停止（已拉起的 DSH 不受影响）
 echo.
 
-node --import tsx packages/host/diechi-process-watchdog/src/cli.ts
+"%NODE_EXE%" --import tsx packages/host/diechi-process-watchdog/src/cli.ts
 
 endlocal

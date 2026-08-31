@@ -38,11 +38,12 @@ class DiechiLauncher
 
         // 启动器放在蝶翅-app根目录或deploy-tools目录均可：以自身目录为基准。
         string baseDir = AppDomain.CurrentDomain.BaseDirectory;
+        // 启动器放在蝶翅-app根目录，或放在 deploy-tools 子目录均可：以自身目录为基准定位 start-diechi.cmd。
         string startCmd = Path.Combine(baseDir, "deploy-tools", "start-diechi.cmd");
         if (!File.Exists(startCmd))
         {
             // 也可能启动器本身就放在 deploy-tools 里（源码/编译输出位置）。
-            startCmd = Path.Combine(baseDir, "..", "start-diechi.cmd");
+            startCmd = Path.Combine(baseDir, "..", "deploy-tools", "start-diechi.cmd");
             startCmd = Path.GetFullPath(startCmd);
         }
         int port = 3090;
