@@ -215,19 +215,27 @@ export function apply(ctx: Context): void {
   const engineIntervalSec = (settingsSvc.get('evolution') as { engineIntervalSec?: number } | undefined)?.engineIntervalSec ?? 3600
   const SNAPSHOT_COOLDOWN_MS = 60 * 60 * 1000 // 每小时一次回归快照，时间序列轻量
   let lastSnapshotAt = 0
+  // 进化闭环「静默」：仅当负样本数量「新增」时才调引擎，避免 2 条陈旧负样本
+  // 每轮刷提议、把 8081(本地 Qwen3.8) 常驻占满显存。初始 -1 让首轮先处理一次既有样本。
+  let lastNegCount = -1
   // 抽取成可复用 tick：启动时立即跑一次（不空等一小时），之后按 interval 周期跑。
   const runEngineTick = async () => {
     try {
-      // ① 引擎路径（失败驱动）
+      // ① 引擎路径（失败驱动）：仅「新增负样本」才调引擎，否则静默跳过
+      // （陈旧负样本每轮刷提议会常驻占满 8081 显存，且产出近重复噪音）。
       const samples = db.listNegativeSamplesDetailed(1000)
-      const summary = buildClusterSummary(samples)
-      const ready = await isEngineReady()
-      if (rawSupervisor !== undefined && summary && ready) {
-        const n = await runEngineAndPropose(service, summary, 3, sm.skillIds)
-        if (n > 0) {
-          // eslint-disable-next-line no-console
-          console.log(`[diechi-evolve] 引擎产出 ${n} 条提议（基于 ${samples.length} 条负样本聚类）`)
+      const negCount = samples.length
+      if (negCount > lastNegCount) {
+        const summary = buildClusterSummary(samples)
+        const ready = await isEngineReady()
+        if (rawSupervisor !== undefined && summary && ready) {
+          const n = await runEngineAndPropose(service, summary, 3, sm.skillIds)
+          if (n > 0) {
+            // eslint-disable-next-line no-console
+            console.log(`[diechi-evolve] 引擎产出 ${n} 条提议（基于 ${samples.length} 条负样本聚类）`)
+          }
         }
+        lastNegCount = negCount
       }
       // ② 一次通过率路径（目标函数重设计：最大化一次通过率）
       try {

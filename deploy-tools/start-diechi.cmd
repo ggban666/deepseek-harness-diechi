@@ -7,8 +7,12 @@ set "DSH_HOME=D:\桌面\振翅科技\蝶翅-app\diechi-home"
 rem 本地 Qwen3.8 供应商（8081）无需真鉴权，llama-server 默认不校验 key；
 rem pi-ai 的 openai-completions 要求带 key，这里给个 dummy 即可。
 set "QWEN38_API_KEY=sk-local-dummy"
+set "EVOLVE_ENGINE_URL=http://127.0.0.1:8081/v1"
+set "EVOLVE_ENGINE_MODEL=Qwen3.8-27B-UD-IQ1_S"
 set "URL=http://127.0.0.1:3090/"
 set "PORT=3090"
+set "QWEN38_PORT=8081"
+set "QWEN38_MODEL=D:\桌面\振翅科技\models\Qwen3.8-27B-UD-IQ1_S\Qwen3.8-27B-UD-IQ1_S.gguf"
 echo.
 echo Diechi App (蝶翅APP)
 echo Open: %URL%
@@ -49,6 +53,14 @@ if not exist "%HARNESS%\node_modules" (
     exit /b 1
   )
   popd
+)
+echo Starting local Qwen3.8 lazy proxy on %QWEN38_PORT%...
+netstat -ano | findstr ":%QWEN38_PORT% " | findstr "LISTENING" >nul
+if %ERRORLEVEL%==0 (
+  echo Qwen3.8 proxy already running.
+) else (
+  start /b "" "C:\Users\wang\.workbuddy\binaries\python\versions\3.13.12\python.exe" "%~dp0evolve\engine.py" serve-lazy --model "%QWEN38_MODEL%" --port %QWEN38_PORT% --internal-port 18081 --ngl 99 --ctx 2048 --idle-sec 600 > "%DSH_HOME%\_8081_lazy.log" 2>&1
+  echo Qwen3.8 lazy proxy started (logs: %DSH_HOME%\_8081_lazy.log).
 )
 echo Starting Diechi...
 start "Diechi App" cmd /k "set DSH_HOME=%DSH_HOME%&& cd /d %HARNESS% && pnpm dsh web --port %PORT%"

@@ -22,11 +22,14 @@
 import argparse
 import json
 import os
+import shutil
 import socket
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
+import http.server
 
 _LLAMA_SERVER = None
 _SERVER_PROC = None
@@ -211,11 +214,155 @@ def propose(port, cluster_summary, max_items=3, grammar_path=None):
     return _validate_proposals(raw)
 
 
+# ---------- 懒加载模式（serve-lazy）：首次请求才加载，空闲自动卸载释放显存 ----------
+class _LazyManager:
+    """在外部端口(如 8081)做反向代理；子 llama-server 跑在内部端口(如 18081)。
+    无请求时空闲 idle_sec 后杀掉子进程 -> 释放 ~7.6G 显存，视觉服务(8080)可同开。
+    首次请求/空闲后再次请求时按需拉起。"""
+
+    def __init__(self, model_path, internal_port, ctx, ngl, idle_sec):
+        self.model_path = model_path
+        self.internal_port = internal_port
+        self.ctx = ctx
+        self.ngl = ngl
+        self.idle_sec = idle_sec
+        self.proc = None
+        self.lock = threading.Lock()
+        self.last = time.time()
+        self._stop = False
+        threading.Thread(target=self._idle_loop, daemon=True).start()
+
+    def ensure_ready(self):
+        with self.lock:
+            if self.proc is None or self.proc.poll() is not None:
+                _log("懒加载：拉起 llama-server（首次请求 / 空闲后再次请求）")
+                self.proc = _spawn_llama(self.model_path, self.internal_port, self.ctx, self.ngl)
+                if not _wait_health(self.internal_port):
+                    raise RuntimeError("llama-server 启动失败（详见 llama-server-lazy.log）")
+        self.last = time.time()
+
+    def touch(self):
+        self.last = time.time()
+
+    def _idle_loop(self):
+        while not self._stop:
+            time.sleep(10)
+            with self.lock:
+                if (self.proc is not None and self.proc.poll() is None
+                        and (time.time() - self.last) > self.idle_sec):
+                    _log("空闲 %ds，卸载 llama-server 释放显存" % self.idle_sec)
+                    try:
+                        self.proc.terminate()
+                    except Exception:
+                        pass
+                    self.proc = None
+
+    def shutdown(self):
+        self._stop = True
+        if self.proc is not None:
+            try:
+                self.proc.terminate()
+            except Exception:
+                pass
+
+
+def _spawn_llama(model_path, port, ctx, ngl):
+    exe = find_llama_server()
+    cmd = [exe, "--model", model_path, "--port", str(port), "--host", "127.0.0.1",
+           "--ctx-size", str(ctx), "--seed", "42", "--temp", "0.2", "-ngl", str(ngl)]
+    logf = open(os.path.join(os.path.dirname(__file__), "llama-server-lazy.log"), "ab")
+    return subprocess.Popen(cmd, stdout=logf, stderr=subprocess.STDOUT)
+
+
+def _wait_health(port, timeout=180):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            urllib.request.urlopen("http://127.0.0.1:%d/health" % port, timeout=2)
+            return True
+        except Exception:
+            time.sleep(1)
+    return False
+
+
+class _ProxyHandler(http.server.BaseHTTPRequestHandler):
+    # 由 serve_lazy 在 server 实例上挂 manager；handler 通过 self.server.manager 读取。
+    def _forward(self):
+        # /health 只报代理存活，不因此触发模型加载（避免健康检查把显存占住）
+        if self.path.rstrip("/") == "/health":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"status":"proxy-ok"}')
+            return
+        mgr = self.server.manager
+        try:
+            mgr.ensure_ready()
+        except Exception as e:
+            self.send_response(503)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(("engine not ready: %s" % e).encode("utf-8"))
+            return
+        mgr.touch()
+        target = "http://127.0.0.1:%d%s" % (mgr.internal_port, self.path)
+        headers = {k: v for k, v in self.headers.items()
+                   if k.lower() not in ("host", "connection", "content-length",
+                                         "transfer-encoding", "accept-encoding")}
+        cl = int(self.headers.get("Content-Length", 0) or 0)
+        body = self.rfile.read(cl) if cl > 0 else None
+        req = urllib.request.Request(target, data=body, headers=headers, method=self.command)
+        try:
+            resp = urllib.request.urlopen(req, timeout=600)
+            self.send_response(resp.status)
+            for k, v in resp.getheaders():
+                if k.lower() in ("transfer-encoding", "connection", "content-length"):
+                    continue
+                self.send_header(k, v)
+            self.end_headers()
+            shutil.copyfileobj(resp, self.wfile)  # 流式转发（兼容 SSE / 普通 JSON）
+        except Exception as e:
+            try:
+                self.send_response(502)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(("proxy error: %s" % e).encode("utf-8"))
+            except Exception:
+                pass
+
+    def do_GET(self):
+        self._forward()
+
+    def do_POST(self):
+        self._forward()
+
+    def log_message(self, *args):
+        pass
+
+
+def serve_lazy(model_path, port, internal_port, ctx, ngl, idle_sec):
+    mgr = _LazyManager(model_path, internal_port, ctx, ngl, idle_sec)
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", port), _ProxyHandler)
+    srv.manager = mgr
+    _log("懒加载代理就绪：外部 :%d -> 内部 :%d（空闲 %ds 自动卸载，释放显存；首次请求才加载）"
+         % (port, internal_port, idle_sec))
+    try:
+        srv.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        mgr.shutdown()
+
+
 def _main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("mode", choices=["serve", "propose"])
+    ap.add_argument("mode", choices=["serve", "serve-lazy", "propose"])
     ap.add_argument("--model", default=os.environ.get("EVOLVE_MODEL"))
     ap.add_argument("--port", type=int, default=8081)
+    ap.add_argument("--internal-port", type=int, default=18081,
+                    help="serve-lazy 模式：子 llama-server 跑在的内部端口（外部端口做代理）。")
+    ap.add_argument("--idle-sec", type=int, default=600,
+                    help="serve-lazy 模式：空闲多少秒后自动卸载模型释放显存。")
     ap.add_argument("--grammar", default=os.path.join(os.path.dirname(__file__), "grammar.gbnf"))
     ap.add_argument("--ctx", type=int, default=4096)
     ap.add_argument("--ngl", type=int, default=99, help="GPU 层数，99=全部 offload 到 RTX 4070（默认）；0=纯 CPU 兜底。")
@@ -236,6 +383,14 @@ def _main():
                 time.sleep(3600)
         except KeyboardInterrupt:
             stop_engine()
+    elif args.mode == "serve-lazy":
+        if not args.model:
+            print("serve-lazy 模式需要 --model", file=sys.stderr)
+            sys.exit(2)
+        # 懒加载代理：外部端口(8081)常驻但只占 ~30MB；子 llama-server 在内部端口，
+        # 首次请求才拉起、-ngl 99 上 GPU；空闲 idle-sec 后卸载，释放 ~7.6G 显存，
+        # 视觉服务(8080)可同时跑。聊天/进化提议都走同一个外部端点。
+        serve_lazy(args.model, args.port, args.internal_port, args.ctx, args.ngl, args.idle_sec)
     else:
         if not args.summary:
             print("propose 模式需要 --summary", file=sys.stderr)
