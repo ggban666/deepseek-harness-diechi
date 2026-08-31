@@ -40,11 +40,19 @@ def _log(msg):
 
 
 def find_llama_server():
-    """定位 llama-server.exe（models/llama.cpp 现为 CUDA 版，CPU 版备份在 llama.cpp-cpu-bak）。"""
+    """定位 llama-server.exe。
+
+    注意：models/llama.cpp/ 虽有 ggml-cuda.dll，但**缺 cuBLAS 运行时
+    (cublas64_12/cublasLt64_12/cudart64_12.dll)**，CUDA 后端会静默回退到
+    CPU，导致 -ngl 99 失效、CPU 被吃满。真正的 CUDA 版在 llama.cpp-cuda/
+    （含全部 cuBLAS DLL）。故此处**优先用 cuda 目录**。
+    CPU 兜底版在 llama.cpp-cpu-bak/。
+    """
     candidates = [
         os.environ.get("LLAMA_SERVER"),
-        r"D:\桌面\振翅科技\models\llama.cpp\llama-server.exe",
         r"D:\桌面\振翅科技\models\llama.cpp-cuda\llama-server.exe",
+        r"D:\桌面\振翅科技\models\llama.cpp\llama-server.exe",
+        r"D:\桌面\振翅科技\models\llama.cpp-cpu-bak\llama-server.exe",
     ]
     for c in candidates:
         if c and os.path.exists(c):
@@ -210,7 +218,7 @@ def _main():
     ap.add_argument("--port", type=int, default=8081)
     ap.add_argument("--grammar", default=os.path.join(os.path.dirname(__file__), "grammar.gbnf"))
     ap.add_argument("--ctx", type=int, default=4096)
-    ap.add_argument("--ngl", type=int, default=0, help="GPU 层数，-1=全部/99=全部，0=纯 CPU。RTX 4070 建议 99")
+    ap.add_argument("--ngl", type=int, default=99, help="GPU 层数，99=全部 offload 到 RTX 4070（默认）；0=纯 CPU 兜底。")
     ap.add_argument("--summary", default="")
     ap.add_argument("--max", type=int, default=3)
     args = ap.parse_args()
