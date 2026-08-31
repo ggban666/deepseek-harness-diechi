@@ -1,0 +1,9 @@
+# dsh bundle: diechi-process-control
+# 独立的外部服务进程控制插件，不依赖 supervisor / evolve / settings，
+# 也无 mount 顺序约束——只要在 web-app 之前 mount 即可（RPC 供前端消费）。
+#
+# 空数组 `[]` 的含义是「本 bundle 不加载任何插件」，必须显式列出插件行，
+# 且新增行要用 `- insert:`（裸 `- id:` 只用于修改已存在的行）。
+- insert:
+    - id: diechi-process-control
+      name: '@deepseek-ai/dsh-host-diechi-process-control'

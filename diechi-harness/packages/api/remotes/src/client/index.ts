@@ -7,6 +7,7 @@ import dynamicRemote from '@deepseek-ai/dsh-cordis-host-runner/remote'
 import pluginInventoryRemote from '@deepseek-ai/dsh-host-plugin-inventory/remote'
 import diechiBrainRemote from '@deepseek-ai/dsh-host-diechi-brain/remote'
 import diechiEvolutionRemote from '@deepseek-ai/dsh-host-diechi-supervisor/remote'
+import diechiProcessRemote from '@deepseek-ai/dsh-host-diechi-process-control/remote'
 import messageFeedbackRemote from '@deepseek-ai/dsh-message-feedback/remote'
 import type { TypertClientRemote } from '@deepseek-ai/dsh-typert-protocol'
 
@@ -24,11 +25,16 @@ export type {} from '@deepseek-ai/dsh-host-plugin-inventory/remote'
 export type {} from '@deepseek-ai/dsh-message-feedback/remote'
 export type {} from '@deepseek-ai/dsh-host-diechi-brain/remote'
 export type {} from '@deepseek-ai/dsh-host-diechi-supervisor/remote'
+export type {} from '@deepseek-ai/dsh-host-diechi-process-control/remote'
 // S4 可感知层的载荷词汇：前端包从这里取名，不必 import 一个 Host 包。
 export type {
   EvolutionCbsOutcome, EvolutionCbsView, EvolutionHistoryPoint, EvolutionProposalView,
   EvolutionSignalTally, EvolutionSnapshot,
 } from '@deepseek-ai/dsh-host-diechi-supervisor/types'
+// 外部服务进程控制的载荷词汇。
+export type {
+  ProcessActionInput, ProcessActionResult, ProcessId, ProcessInfo, ProcessListResult, ProcessRunState,
+} from '@deepseek-ai/dsh-host-diechi-process-control/types'
 // The forwarded-event allowlist's selection seat: without it in the consumer's
 // compilation face `TypertRemoteEvent` is `never` and every `$on` call fails.
 export type { ApiRemoteForwardedEvent } from '../types.ts'
@@ -122,7 +128,7 @@ export async function apply(ctx: Context): Promise<() => Promise<void>> {
   try {
     for (const contribution of [
       commandsRemote, goalsRemote, dynamicRemote, pluginInventoryRemote, messageFeedbackRemote,
-      diechiBrainRemote, diechiEvolutionRemote,
+      diechiBrainRemote, diechiEvolutionRemote, diechiProcessRemote,
     ]) {
       try {
         disposers.push(await ctx.remote.$mount(contribution))

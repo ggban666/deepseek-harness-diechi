@@ -292,6 +292,7 @@
     { "path": "./packages/host/diechi-process-watchdog" },
     { "path": "./packages/host/diechi-brain" },
     { "path": "./packages/host/diechi-evolve" },
+    { "path": "./packages/host/diechi-process-control" },
     { "path": "./packages/host/webserver" },
     { "path": "./packages/sdk/client" },
     { "path": "./packages/sdk/protocol" },
