@@ -53,3 +53,6 @@ deploy-tools/vision-cloud.json
 __pycache__/
 *.pyc
 *.orig-modular-bak
+
+# 上游克隆（cangjie-skill，本地参考，不提交避免嵌套 git）
+vendor/
