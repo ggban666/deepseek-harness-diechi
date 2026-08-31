@@ -112,7 +112,7 @@ const DEFS: Record<ProcessId, ProcessDef> = {
           join(root, 'deploy-tools', 'evolve', 'engine.py'), 'serve-lazy',
           '--model', join(root, 'models', 'Qwen3.8-27B-UD-IQ1_S', 'Qwen3.8-27B-UD-IQ1_S.gguf'),
           '--port', '8081', '--internal-port', '18081',
-          '--ngl', '99', '--ctx', '8192', '--idle-sec', '600',
+          '--ngl', '99', '--ctx', '32768', '--idle-sec', '600',
         ],
         cwd: join(root, 'deploy-tools', 'evolve'),
       }

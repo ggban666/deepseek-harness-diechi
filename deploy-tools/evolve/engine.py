@@ -42,6 +42,11 @@ def _log(msg):
     print("[evolve-engine] %s" % msg, flush=True)
 
 
+def _project_root():
+    """engine.py 位于 蝶翅-app/deploy-tools/evolve/，项目根目录为其上三级。"""
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+
+
 def find_llama_server():
     """定位 llama-server.exe。
 
@@ -51,11 +56,12 @@ def find_llama_server():
     （含全部 cuBLAS DLL）。故此处**优先用 cuda 目录**。
     CPU 兜底版在 llama.cpp-cpu-bak/。
     """
+    root = _project_root()
     candidates = [
         os.environ.get("LLAMA_SERVER"),
-        r"D:\桌面\振翅科技\models\llama.cpp-cuda\llama-server.exe",
-        r"D:\桌面\振翅科技\models\llama.cpp\llama-server.exe",
-        r"D:\桌面\振翅科技\models\llama.cpp-cpu-bak\llama-server.exe",
+        os.path.join(root, "models", "llama.cpp-cuda", "llama-server.exe"),
+        os.path.join(root, "models", "llama.cpp", "llama-server.exe"),
+        os.path.join(root, "models", "llama.cpp-cpu-bak", "llama-server.exe"),
     ]
     for c in candidates:
         if c and os.path.exists(c):
@@ -63,14 +69,15 @@ def find_llama_server():
     raise RuntimeError("llama-server.exe 未找到，请设置 LLAMA_SERVER 环境变量")
 
 
-def start_engine(model_path, port=8081, ctx=4096, grammar=None, ngl=0):
+def start_engine(model_path, port=8081, ctx=32768, grammar=None, ngl=0):
     """后台拉起 llama-server。返回 Popen。ngl=99 全层 GPU，0=纯 CPU 兜底。"""
     global _SERVER_PROC, _LLAMA_SERVER
     if _SERVER_PROC is not None and _SERVER_PROC.poll() is None:
         return _SERVER_PROC
     exe = find_llama_server()
     cmd = [exe, "--model", model_path, "--port", str(port), "--host", "127.0.0.1",
-           "--ctx-size", str(ctx), "--seed", "42", "--temp", "0.2", "-ngl", str(ngl)]
+           "--ctx-size", str(ctx), "--seed", "42", "--temp", "0.2", "-ngl", str(ngl),
+           "--parallel", "1", "--cache-type-k", "q8_0", "--cache-type-v", "q8_0"]
     if grammar:
         # grammar 是相对路径时转绝对，避免受 cwd 影响
         if not os.path.isabs(grammar):
@@ -78,7 +85,7 @@ def start_engine(model_path, port=8081, ctx=4096, grammar=None, ngl=0):
         # 中文路径坑：llama.cpp 在 Windows 下用 std::ifstream 读 grammar，
         # 中文目录会报 failed to open file。复制到 ASCII 临时目录再传。
         if any(ord(c) > 127 for c in grammar):
-            ascii_dir = os.path.join(os.environ.get("TEMP", r"C:\temp"), "evolve-grammar")
+            ascii_dir = os.path.join(os.environ.get("TEMP", os.path.join(os.path.dirname(__file__), "_tmp_grammar")), "evolve-grammar")
             os.makedirs(ascii_dir, exist_ok=True)
             ascii_g = os.path.join(ascii_dir, os.path.basename(grammar))
             import shutil
@@ -268,10 +275,16 @@ class _LazyManager:
 
 def _spawn_llama(model_path, port, ctx, ngl):
     exe = find_llama_server()
+    # parallel=1：把 ctx 全部留给单会话（避免被多 slot 分摊成 2048/个）；
+    # cache-type q8_0：KV cache 量化，8GB 显存下 ctx 提到 32768 不 OOM。
     cmd = [exe, "--model", model_path, "--port", str(port), "--host", "127.0.0.1",
-           "--ctx-size", str(ctx), "--seed", "42", "--temp", "0.2", "-ngl", str(ngl)]
+           "--ctx-size", str(ctx), "--seed", "42", "--temp", "0.2", "-ngl", str(ngl),
+           "--parallel", "1", "--cache-type-k", "q8_0", "--cache-type-v", "q8_0"]
     logf = open(os.path.join(os.path.dirname(__file__), "llama-server-lazy.log"), "ab")
-    return subprocess.Popen(cmd, stdout=logf, stderr=subprocess.STDOUT)
+    # 与 start_engine 一致：cwd 必须设为 exe 所在目录，否则 CUDA 版找不到
+    # 同目录的 ggml-cuda.dll，Windows 会按当前目录搜索 DLL 而报
+    # STATUS_ENTRYPOINT_NOT_FOUND 直接退出（这是懒加载模式曾经静默失败的根因）。
+    return subprocess.Popen(cmd, cwd=os.path.dirname(exe), stdout=logf, stderr=subprocess.STDOUT)
 
 
 def _wait_health(port, timeout=180):
@@ -364,7 +377,7 @@ def _main():
     ap.add_argument("--idle-sec", type=int, default=600,
                     help="serve-lazy 模式：空闲多少秒后自动卸载模型释放显存。")
     ap.add_argument("--grammar", default=os.path.join(os.path.dirname(__file__), "grammar.gbnf"))
-    ap.add_argument("--ctx", type=int, default=4096)
+    ap.add_argument("--ctx", type=int, default=32768)
     ap.add_argument("--ngl", type=int, default=99, help="GPU 层数，99=全部 offload 到 RTX 4070（默认）；0=纯 CPU 兜底。")
     ap.add_argument("--summary", default="")
     ap.add_argument("--max", type=int, default=3)
