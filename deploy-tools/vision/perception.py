@@ -111,7 +111,7 @@ def run_vision(messages):
     return processor.decode(gen, skip_special_tokens=True).strip()
 
 
-def run_vision_text(text):
+def run_vision_text(text, max_new_tokens=1024):
     """纯文本推理（视频操作提炼第二阶段用，不吃图，省 token）。
     必须走 apply_chat_template：否则模型把输入当续写复述，不会按指令输出 JSON。"""
     import copy
@@ -119,7 +119,7 @@ def run_vision_text(text):
     prompt = processor.apply_chat_template(copy.deepcopy(msgs), add_generation_prompt=True)
     with torch.inference_mode():
         inputs = processor(text=[prompt], return_tensors="pt").to("cuda")
-        out = model.generate(**inputs, max_new_tokens=1024, temperature=0.2, do_sample=True)
+        out = model.generate(**inputs, max_new_tokens=int(max_new_tokens), temperature=0.2, do_sample=True)
     gen = out[0][inputs["input_ids"].shape[1]:]
     return processor.decode(gen, skip_special_tokens=True).strip()
 

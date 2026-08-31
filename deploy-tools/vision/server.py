@@ -24,7 +24,9 @@ from pydantic import BaseModel, Field
 
 from . import cloud
 from . import config as cfg
+from . import distill as distill_mod
 from . import media
+from . import memory as memmod
 from . import perception
 from . import sessions as sessmod
 from . import voice as voice_mod
@@ -40,10 +42,17 @@ async def _run_recognition(sess, jpeg):
     try:
         async with perception.infer_lock:
             text = await asyncio.to_thread(perception.recognize_frame_jpeg, jpeg, 80, perception.RECOG_CANCEL)
-        if text and text.strip():
-            sess.captions.append((time.time(), text.strip()))
-            while len(sess.captions) > _MAX_CAPTIONS:
-                sess.captions.popleft()
+            if text and text.strip():
+                sess.captions.append((time.time(), text.strip()))
+                while len(sess.captions) > _MAX_CAPTIONS:
+                    sess.captions.popleft()
+                # M1 块摘要调度：空闲窗口内顺手把新 captions 压成块记忆入库（已在锁内，不抢 GPU）
+                try:
+                    digest, _n = await asyncio.to_thread(memmod.maybe_digest_block, sess)
+                    if digest:
+                        print("[memory] block digest: %s" % digest[:80], flush=True)
+                except Exception:
+                    pass
     except Exception:
         pass
     finally:
@@ -162,6 +171,52 @@ SKILL_PROMPT = (
 )
 
 
+async def _prepare_video_media(data, name):
+    """解码视频 + 抽音轨 ASR（带时间戳分段）。返回 (frames, fps, duration, seg_text, transcript)。
+    供 video/describe 与 video/distill 共用。"""
+    try:
+        frames, fps, duration = await asyncio.to_thread(media.decode_video, data, name)
+    except Exception as exc:
+        raise HTTPException(422, str(exc))
+    # 语音转写：抽音轨 -> 独立子进程 faster-whisper（不占主进程 GPU），带时间戳分段
+    t_asr0 = time.time()
+    transcript, segments = None, []
+    try:
+        wav = await asyncio.to_thread(media.extract_audio_wav, data, name)
+        if wav:
+            transcript, segments = await asyncio.to_thread(voice_mod.transcribe_wav_subprocess, wav)
+            print("[video] asr %s -> %s (%d segs)" % (
+                round(time.time() - t_asr0, 1), "ok" if transcript else "none", len(segments)), flush=True)
+    except Exception:
+        transcript, segments = None, []
+    seg_lines = []
+    for sg in segments or []:
+        st, en = float(sg.get("start") or 0), float(sg.get("end") or 0)
+        tx = (sg.get("text") or "").strip()
+        if tx:
+            seg_lines.append("[%02d:%02d-%02d:%02d] %s" % (
+                int(st // 60), int(st % 60), int(en // 60), int(en % 60), tx))
+    return frames, fps, duration, "\n".join(seg_lines), transcript
+
+
+async def _video_overview(frames, fps, duration, seg_text):
+    """阶段 1：老师傅详述（本地 MiniCPM / 云端双通道）。"""
+    cc = cfg._cloud_config()
+    use_cloud = cfg._is_cloud_model(cfg._current_model())
+    prompt = distill_mod.overview_prompt(len(frames), duration, seg_text)
+    if use_cloud:
+        cloud_images, _n = media._frames_to_cloud_images(frames, cc.get("maxFrames") or 8)
+        msgs = [{"role": "user", "content": cloud_images + [{"type": "text", "text": prompt}]}]
+        parts = [p async for p in cloud._cloud_post(msgs, cc, 2048, 0.35, stream=False)]
+        return "".join(parts).strip()
+    msgs = [{"role": "user", "content": [
+        {"type": "video", "video": (frames, fps, duration)},
+        {"type": "text", "text": prompt},
+    ]}]
+    async with perception.infer_lock:
+        return await asyncio.to_thread(perception.run_vision, msgs)
+
+
 @app.post("/api/v1/video/describe")
 async def video_describe(file: UploadFile = File(...), prompt: str = ""):
     """视频操作提炼（两阶段）：
@@ -178,69 +233,14 @@ async def video_describe(file: UploadFile = File(...), prompt: str = ""):
     data = await file.read()
     if not data:
         raise HTTPException(400, "empty upload")
-    try:
-        frames, fps, duration = await asyncio.to_thread(media.decode_video, data, file.filename or "video.mp4")
-    except Exception as exc:
-        raise HTTPException(422, str(exc))
-    # 语音转写：抽音轨 -> 独立子进程 faster-whisper（不占主进程 GPU），带时间戳分段
-    t_asr0 = time.time()
-    transcript = None
-    segments = []
-    try:
-        wav = await asyncio.to_thread(media.extract_audio_wav, data, file.filename or "video.mp4")
-        if wav:
-            transcript, segments = await asyncio.to_thread(voice_mod.transcribe_wav_subprocess, wav)
-            print("[video] asr %s -> %s (%d segs)" % (
-                round(time.time() - t_asr0, 1), "ok" if transcript else "none", len(segments)), flush=True)
-    except Exception:
-        transcript, segments = None, []
-    seg_text = ""
-    if segments:
-        seg_lines = []
-        for sg in segments:
-            st, en = float(sg.get("start") or 0), float(sg.get("end") or 0)
-            tx = (sg.get("text") or "").strip()
-            if tx:
-                seg_lines.append("[%02d:%02d-%02d:%02d] %s" % (
-                    int(st // 60), int(st % 60), int(en // 60), int(en % 60), tx))
-        seg_text = "\n".join(seg_lines)
+    frames, fps, duration, seg_text, transcript = await _prepare_video_media(data, file.filename or "video.mp4")
     # 阶段 1：详细操作过程叙述
-    n_frames = int(len(frames))
-    stage1_prompt = (
-        "你是老师傅，正在把这段实操视频讲给徒弟听。画面是按时间顺序均匀采样的关键帧（共 %d 帧，视频实际时长约 %s 秒），语音讲解带时间戳。"
-        "请按时间顺序把整个操作讲清楚："
-        "1. 开头用一句话说明这次操作的目的是什么、最终要做成什么结果；"
-        "2. 按步骤讲清每个动作：用什么工具/材料、怎么操作、先后顺序、画面里能看见的关键细节；"
-        "3. 结合语音讲解讲出每步的目的与要点，像现场教学一样自然，不要机械罗列；"
-        "4. 哪里容易出错、视频里有没有做错的示范，单独指出并说明正确做法；"
-        "5. 结尾用一句话说明怎么判断操作成功（结果标准）。"
-        "用「第1步/第2步…」组织，具体、可执行，禁止空泛概括。"
-        "\n\n语音分段转写（时间戳）：\n%s"
-    ) % (n_frames, str(round(duration or 0, 1)), seg_text or "（本视频无有效语音）")
     t_vis0 = time.time()
-    if use_cloud:
-        cloud_images, n_sent = media._frames_to_cloud_images(frames, cc.get("maxFrames") or 8)
-        stage1_messages = [{"role": "user", "content": cloud_images + [{"type": "text", "text": stage1_prompt}]}]
-        try:
-            parts = [p async for p in cloud._cloud_post(stage1_messages, cc, 2048, 0.35, stream=False)]
-            process = "".join(parts).strip()
-        except Exception as exc:
-            import traceback
-            traceback.print_exc()
-            raise HTTPException(502, "云端视觉调用失败: " + str(exc)[:300])
-        print("[video][ds] stage1 frames=%s/%s vision=%ss" % (n_sent, n_frames, round(time.time() - t_vis0, 1)), flush=True)
+    process = await _video_overview(frames, fps, duration, seg_text)
+    n_frames = int(len(frames))
+    if cfg._is_cloud_model(cfg._current_model()):
+        print("[video][ds] stage1 vision=%ss" % round(time.time() - t_vis0, 1), flush=True)
     else:
-        stage1_messages = [{"role": "user", "content": [
-            {"type": "video", "video": (frames, fps, duration)},
-            {"type": "text", "text": stage1_prompt},
-        ]}]
-        async with perception.infer_lock:
-            try:
-                process = await asyncio.to_thread(perception.run_vision, stage1_messages)
-            except Exception as exc:
-                import traceback
-                traceback.print_exc()
-                raise HTTPException(500, "vision inference failed: " + str(exc)[:300])
         print("[video] stage1 frames=%s vision=%ss" % (n_frames, round(time.time() - t_vis0, 1)), flush=True)
     if not process:
         process = ""
@@ -289,6 +289,87 @@ async def video_describe(file: UploadFile = File(...), prompt: str = ""):
         "frames": n_frames, "duration": round(duration or 0, 2),
         "transcript": transcript_display,
     }
+
+
+@app.post("/api/v1/video/distill")
+async def video_distill(file: UploadFile = File(None), video_path: str = Form(""), max_skills: int = Form(3)):
+    """视频蒸馏（cangjie-skill v2.5 RIA-TV++ 本地移植）：
+    视频 -> 老师傅详述 + 时间戳 ASR -> 4 路提取（原则/框架/反例/案例）-> 编译成
+    diechi 技能包草稿（frontmatter md）-> 落 diechi-home/distill-inbox/ 供人工 review
+    后装入 skills/。file（multipart 上传）或 video_path（本机路径）二选一。
+    蒸馏 LLM：云端通道已配置走云端，否则走本地 MiniCPM（纯文本推理）。"""
+    cc = cfg._cloud_config()
+    use_cloud = cfg._is_cloud_model(cfg._current_model())
+    if use_cloud and not (cc.get("baseURL") and cc.get("apiKey") and cc.get("model")):
+        raise HTTPException(503, "云端视觉未配置：请填写 deploy-tools/vision-cloud.json（model/baseURL/apiKey）")
+    if not use_cloud:
+        await asyncio.to_thread(perception._ensure_vision_loaded)
+    if file is not None:
+        data = await file.read()
+        name = file.filename or "video.mp4"
+    elif video_path:
+        p = os.path.normpath(video_path)
+        if not os.path.isfile(p):
+            raise HTTPException(404, "视频不存在: %s" % video_path)
+        with open(p, "rb") as fh:
+            data = fh.read()
+        name = os.path.basename(p)
+    else:
+        raise HTTPException(400, "需要 file（上传）或 video_path（本机路径）之一")
+    if not data:
+        raise HTTPException(400, "empty upload")
+    frames, fps, duration, seg_text, _tr = await _prepare_video_media(data, name)
+    if frames is None or len(frames) == 0:
+        raise HTTPException(422, "no frames decoded")
+    t0 = time.time()
+    process = await _video_overview(frames, fps, duration, seg_text)
+    if not process or not process.strip():
+        raise HTTPException(500, "阶段1详述为空")
+    overview = distill_mod.merge_material(process, seg_text)
+
+    def _llm(prompt):
+        return perception.run_vision_text(prompt)
+
+    async with perception.infer_lock:
+        result = await asyncio.to_thread(distill_mod.run_distill, overview, _llm,
+                                         {"maxSkills": max(1, min(int(max_skills or 3), 5)),
+                                          "sourceVideo": name})
+    skills = result.get("skills") or []
+    print("[distill] %s frames=%s total=%ss skills=%d" % (
+        name, len(frames), round(time.time() - t0, 1), len(skills)), flush=True)
+    return {
+        "ok": True, "source": name, "duration": round(duration or 0, 2), "frames": len(frames),
+        "overview_chars": len(process), "skills": skills,
+        "inbox": distill_mod.inbox_dir(),
+        "extractor_raw": {k: (v[:1200] if isinstance(v, str) else v)
+                          for k, v in (result.get("units") or {}).items()},
+        "compiled_preview": (result.get("compiled") or "")[:1500],
+    }
+
+
+@app.get("/api/v1/memory/stats")
+async def memory_stats():
+    """长期语义记忆统计（M1 可观测）。"""
+    st = memmod.STORE
+    kinds = {}
+    for e in st.entries:
+        kinds[e.get("kind", "?")] = kinds.get(e.get("kind", "?"), 0) + 1
+    return {"entries": len(st.entries), "kinds": kinds,
+            "data_dir": memmod._DATA_DIR, "vector_backend": "bge-small-zh" if memmod._get_st_model() is not None else "jieba-hash"}
+
+
+@app.get("/api/v1/memory/search")
+async def memory_search(q: str = "", k: int = 5):
+    """检索长期语义记忆（调试/前端回看面板用）。"""
+    hits = memmod.STORE.search(q, k=max(1, min(k, 20)))
+    return {"hits": [{"score": round(s, 3), **e} for s, e in hits]}
+
+
+@app.post("/api/v1/memory/save")
+async def memory_save():
+    """手动落盘（正常情况下写入即标脏，下次块摘要后自动存）。"""
+    memmod.STORE.save()
+    return {"ok": True, "entries": len(memmod.STORE.entries)}
 
 
 @app.post("/api/v1/asr")

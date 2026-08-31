@@ -16,6 +16,7 @@ from collections import deque as _deque
 from . import cloud
 from . import config as cfg
 from . import media
+from . import memory as memmod
 from . import perception
 
 VISION_SESSIONS = {}
@@ -29,7 +30,7 @@ class VisionSession:
     __slots__ = ("sid", "created", "last_active", "frames", "messages", "cancel", "busy",
                  "captions", "recogBusy", "lastRecogAt",
                  "envFirstAt", "envChangedCount", "envLastChangeAt", "envLastPacketAt",
-                 "persona", "memory")
+                 "persona", "memory", "lastBlockAt")
 
     def __init__(self):
         self.sid = _uuid.uuid4().hex[:12]
@@ -50,7 +51,9 @@ class VisionSession:
         self.envLastPacketAt = None        # 最近一次打包发送时间
         # 当前平权技能上下文（前端每轮热切换下发）：人格=勾选技能内容，记忆=最近视觉记忆
         self.persona = ""
-        self.memory = "" 
+        self.memory = ""
+        # M1 流式记忆：上次块摘要时间（0 = 会话开始即累计）
+        self.lastBlockAt = 0.0
 
 
 def _session_get(sid):
@@ -126,6 +129,16 @@ def _session_system_prompt(sess):
     return base + "\n\n" + "\n\n".join(extra)
 
 
+def _session_memory_context(sess, user_text):
+    """M1 检索式组装：按用户提问从长期语义记忆召回 top-k（恒定预算，不塞全量历史）。"""
+    if not user_text or not user_text.strip():
+        return ""
+    try:
+        return memmod.STORE.context_block(user_text.strip()[:200])
+    except Exception:
+        return ""
+
+
 def _build_session_messages(sess, user_text, reason="speech"):
     msgs = [{"role": "system", "content": [{"type": "text", "text": _session_system_prompt(sess)}]}]
     msgs += sess.messages[-MAX_SESSION_TEXT_TURNS:]
@@ -135,8 +148,11 @@ def _build_session_messages(sess, user_text, reason="speech"):
     if latest is not None:
         content.append(_jpeg_image_content(latest))
     text = user_text or "（请结合画面简短描述当前场景）"
+    mem_ctx = _session_memory_context(sess, user_text) if reason == "speech" else ""
     env_ctx = _session_env_state(sess, reason)
     cap_ctx = _session_captions_context(sess)
+    if mem_ctx:
+        text = mem_ctx + "\n\n" + text
     if env_ctx:
         text = env_ctx + "\n\n" + text
     if cap_ctx:
@@ -169,8 +185,11 @@ def _build_cloud_session_messages(sess, user_text, cc, reason="speech"):
     if latest is not None:
         content.append(_jpeg_image_content(latest))
     text = user_text or "（请结合画面简短描述当前场景）"
+    mem_ctx = _session_memory_context(sess, user_text) if reason == "speech" else ""
     env_ctx = _session_env_state(sess, reason)
     cap_ctx = _session_captions_context(sess)
+    if mem_ctx:
+        text = mem_ctx + "\n\n" + text
     if env_ctx:
         text = env_ctx + "\n\n" + text
     if cap_ctx:
@@ -199,6 +218,12 @@ def _stream_session_turn(sess, user_text, max_new_tokens, temperature, reason="s
             sess.messages.append({"role": "assistant", "content": [{"type": "text", "text": out}]})
         if len(sess.messages) > MAX_SESSION_TEXT_TURNS:
             del sess.messages[:len(sess.messages) - MAX_SESSION_TEXT_TURNS]
+        # M1：问答对入长期记忆（跨会话存活）
+        if user_text and out:
+            try:
+                memmod.STORE.add("问：%s 答：%s" % (user_text.strip()[:120], out.strip()[:160]), kind="qa", sid=sess.sid)
+            except Exception:
+                pass
         sess.busy = False
         sess.envLastPacketAt = time.time()
 

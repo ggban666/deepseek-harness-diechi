@@ -76,22 +76,34 @@ def transcribe_wav_subprocess(wav_bytes):
         job_id = next(_asr_seq)
         req = json.dumps({"id": job_id, "wav": base64.b64encode(wav_bytes).decode("ascii")}, ensure_ascii=False) + "\n"
 
-        def _roundtrip():
-            proc.stdin.write(req.encode("utf-8"))
-            proc.stdin.flush()
-            line = proc.stdout.readline()
+        def _roundtrip(p):
+            p.stdin.write(req.encode("utf-8"))
+            p.stdin.flush()
+            line = p.stdout.readline()
             if not line:
                 raise RuntimeError("worker closed stdout")
             resp = json.loads(line.decode("utf-8", "ignore"))
             return ((resp.get("text") or "").strip() or None, resp.get("segments") or [])
 
         result = {}
-        t = threading.Thread(target=lambda: result.update(res=_roundtrip()), daemon=True)
+        t = threading.Thread(target=lambda: result.update(res=_roundtrip(proc)), daemon=True)
         t.start()
         t.join(90)  # 90s 兜底：正常热模型 1~3s
         if t.is_alive():
             print("[asr] worker roundtrip timed out, restarting", flush=True)
             _kill_asr_worker()
+            return None, []
+        if "res" not in result and proc.poll() is not None:
+            # worker 中途死掉（BrokenPipe 等）：重启一次并重试
+            print("[asr] worker died mid-request, respawning", flush=True)
+            _kill_asr_worker()
+            proc2 = _ensure_asr_worker()
+            if proc2 is not None and proc2.poll() is None:
+                t = threading.Thread(target=lambda: result.update(res=_roundtrip(proc2)), daemon=True)
+                t.start()
+                t.join(90)
+                if not t.is_alive() and "res" in result:
+                    return result["res"]
             return None, []
         if "res" in result:
             return result["res"]
