@@ -15,6 +15,7 @@
  * @module @deepseek-ai/dsh-host-diechi-evolve/engine
  */
 
+import * as fs from 'node:fs'
 import type { ProposalDraft } from './types.ts'
 
 /** GBNF 允许的 kind 白名单（与 deploy-tools/evolve/grammar.gbnf 严格一致）。 */
@@ -23,6 +24,25 @@ const ALLOWED_KINDS = new Set(['patch-skill', 'add-skill', 'add-case', 'add-prom
 /** llama-server 引擎端点。可用 EVOLVE_ENGINE_URL 覆盖。 */
 function engineUrl(): string {
   return process.env.EVOLVE_ENGINE_URL ?? 'http://127.0.0.1:8081'
+}
+
+/**
+ * GBNF 内容缓存（只读一次）。默认读 EVOLVE_GRAMMAR_FILE，缺省指向仓库内置 grammar.gbnf。
+ * 关键：grammar 以【字符串内联】进每次请求体，而不是启动级 --grammar-file，
+ * 这样 8081 平时是裸奔聊天模型，只有进化引擎发提议时才约束格式。
+ */
+let _grammarCache: string | null | undefined
+function grammarContent(): string | undefined {
+  if (_grammarCache !== undefined) return _grammarCache ?? undefined
+  const p =
+    process.env.EVOLVE_GRAMMAR_FILE ??
+    'D:\\桌面\\振翅科技\\蝶翅-app\\deploy-tools\\evolve\\grammar.gbnf'
+  try {
+    _grammarCache = fs.readFileSync(p, 'utf-8')
+  } catch {
+    _grammarCache = null
+  }
+  return _grammarCache ?? undefined
 }
 
 /** 引擎输出 -> 结构化提议。校验失败一律丢弃，返回空数组。 */
@@ -92,28 +112,54 @@ export function buildEnginePrompt(
   )
 }
 
-/** 调 llama-server 的 /completion。失败抛错，由调用方兜底。 */
+/** 进化引擎专属：提议器请求用的系统提示词（与 Python engine.py 同源）。 */
+const ENGINE_SYSTEM =
+  '你是蝶翅系统的「升级设计者」，负责把失败聚类摘要转成结构化改进提议。' +
+  '严格按用户指令输出，不要额外解释。'
+
+/** 引擎模型名（随 EVOLVE_ENGINE_URL 指向的实例而定；本地默认 Qwen3.8-27B）。 */
+function engineModel(): string {
+  return process.env.EVOLVE_ENGINE_MODEL ?? 'Qwen3.8-27B-UD-IQ1_S'
+}
+
+/**
+ * 调 llama-server 的 /v1/chat/completions（与聊天同一个端点，证明「一个 API 两用」）。
+ * 失败抛错，由调用方兜底。
+ *
+ * 关键点：
+ *  - grammar 按请求内联 → 仅本次提议约束为 JSON，不污染聊天；
+ *  - enable_thinking:false → 关掉 Qwen 的 <think> 推理标签（GBNF 不允许 <think>，
+ *    弱模型在约束下会退化成空白，这是之前裸 /completion 出空的根因）。
+ */
 async function completion(prompt: string, maxTokens = 400): Promise<string> {
-  const url = engineUrl() + '/completion'
+  const url = engineUrl() + '/v1/chat/completions'
+  const grammar = grammarContent()
   // 27B 1bit 弱模型约 2-4 tok/s，400 tokens 需 100-200s；超时放宽到 300s 避免被掐断。
   const doReq = async (): Promise<string> => {
+    const body: Record<string, unknown> = {
+      model: engineModel(),
+      messages: [
+        { role: 'system', content: ENGINE_SYSTEM },
+        { role: 'user', content: prompt },
+      ],
+      max_tokens: maxTokens,
+      temperature: 0.2,
+      chat_template_kwargs: { enable_thinking: false },
+    }
+    if (grammar) body.grammar = grammar
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      // 不带 cache_prompt：summary 每次不同、prompt 极短（eval <1s），缓存零收益，
-      // 反而会因 KV 槽复用（f_sim_best=1.000）偶发返回空生成。
-      body: JSON.stringify({
-        prompt,
-        n_predict: maxTokens,
-        temperature: 0.2,
-        stop: ['<|im_end|>', '<|endoftext|>'],
-      }),
+      body: JSON.stringify(body),
       signal: AbortSignal.timeout(300_000),
     })
     if (!res.ok) throw new Error(`engine HTTP ${res.status}`)
-    const data = await res.json() as { content?: string; error?: string }
+    const data = await res.json() as {
+      choices?: Array<{ message?: { content?: string } }>
+      error?: string
+    }
     if (typeof data.error === 'string' && data.error) throw new Error(`engine error: ${data.error}`)
-    return (data.content ?? '').trim()
+    return (data.choices?.[0]?.message?.content ?? '').trim()
   }
   let out = await doReq()
   // 偶发空响应（llama.cpp 槽复用 bug）兜底：重试一次，再空才如实返回。

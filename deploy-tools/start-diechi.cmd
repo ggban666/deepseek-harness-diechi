@@ -4,6 +4,9 @@ setlocal
 title Diechi App
 set "HARNESS=D:\桌面\振翅科技\蝶翅-app\diechi-harness"
 set "DSH_HOME=D:\桌面\振翅科技\蝶翅-app\diechi-home"
+rem 本地 Qwen3.8 供应商（8081）无需真鉴权，llama-server 默认不校验 key；
+rem pi-ai 的 openai-completions 要求带 key，这里给个 dummy 即可。
+set "QWEN38_API_KEY=sk-local-dummy"
 set "URL=http://127.0.0.1:3090/"
 set "PORT=3090"
 echo.

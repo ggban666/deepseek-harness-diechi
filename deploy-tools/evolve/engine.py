@@ -109,20 +109,33 @@ def stop_engine():
     _SERVER_PROC = None
 
 
-def _completion(prompt, port, max_tokens=600, temperature=0.2):
-    body = json.dumps({
-        "prompt": prompt,
-        "n_predict": max_tokens,
+def _completion(prompt, port, max_tokens=600, temperature=0.2, grammar=None,
+                model=None):
+    # 与聊天同一个端点（/v1/chat/completions），证明「一个 API 两用」：
+    # 聊天不带 grammar → 自然语言；提议带 grammar + 关 thinking → JSON。
+    if model is None:
+        model = os.environ.get("EVOLVE_ENGINE_MODEL", "Qwen3.8-27B-UD-IQ1_S")
+    body = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": "你是蝶翅系统的「升级设计者」，负责把失败聚类摘要转成结构化改进提议。严格按用户指令输出，不要额外解释。"},
+            {"role": "user", "content": prompt},
+        ],
+        "max_tokens": max_tokens,
         "temperature": temperature,
-        "stop": ["<|im_end|>", "<|endoftext|>"],
-        "cache_prompt": True,
-    }).encode("utf-8")
+        # 关掉 Qwen 的 <think> 推理标签：GBNF 不允许 <think>，弱模型在约束下会退化成空白。
+        "chat_template_kwargs": {"enable_thinking": False},
+    }
+    # grammar 按请求内联，不锁启动级。
+    if grammar:
+        body["grammar"] = grammar
+    body = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(
-        "http://127.0.0.1:%d/completion" % port,
+        "http://127.0.0.1:%d/v1/chat/completions" % port,
         data=body, headers={"Content-Type": "application/json"}, method="POST")
     with urllib.request.urlopen(req, timeout=180) as r:
         out = json.loads(r.read().decode("utf-8"))
-    return (out.get("content") or "").strip()
+    return (out.get("choices", [{}])[0].get("message", {}).get("content") or "").strip()
 
 
 def _validate_proposals(raw):
@@ -162,8 +175,12 @@ def _validate_proposals(raw):
     return ok
 
 
-def propose(port, cluster_summary, max_items=3):
-    """核心：喂聚类摘要，产出建议性提议。失败返回 []。"""
+def propose(port, cluster_summary, max_items=3, grammar_path=None):
+    """核心：喂聚类摘要，产出建议性提议。失败返回 []。
+
+    grammar_path：GBNF 文件路径。若给出，则在本次请求体里内联 grammar
+    （不再依赖启动级 --grammar-file），让 8081 可以同时当聊天模型用。
+    """
     sys_prompt = (
         "你是蝶翅系统的「升级设计者」。读下面的失败场景聚类摘要，"
         "针对每一类提出如何改进现有技能/知识/提示，让同类任务下次一次通过。\n"
@@ -173,7 +190,15 @@ def propose(port, cluster_summary, max_items=3):
         "3. details 写清楚具体改什么（补进技能哪一节、加什么步骤）；\n"
         "4. 最多 %d 条；宁缺毋滥，没有把握就不提。\n\n"
         "聚类摘要：\n%s" % (max_items, cluster_summary))
-    raw = _completion(sys_prompt, port, max_tokens=600)
+    # 内联读取 grammar（字符串直接进请求体，彻底绕开中文路径的 std::ifstream 坑）。
+    grammar = None
+    if grammar_path:
+        try:
+            with open(grammar_path, "r", encoding="utf-8") as f:
+                grammar = f.read()
+        except Exception as e:
+            _log("读取 grammar 失败(%s)，本次不约束格式" % e)
+    raw = _completion(sys_prompt, port, max_tokens=600, grammar=grammar)
     _log("引擎原始输出: %s" % raw[:200])
     return _validate_proposals(raw)
 
@@ -194,8 +219,10 @@ def _main():
         if not args.model:
             print("serve 模式需要 --model", file=sys.stderr)
             sys.exit(2)
-        start_engine(args.model, args.port, args.ctx, args.grammar, ngl=args.ngl)
-        _log("引擎就绪，端口 %d。Ctrl+C 退出。" % args.port)
+        # 启动【不带】--grammar-file：8081 平时是裸奔聊天模型（蝶翅可聊天）。
+        # grammar 改由 propose 模式按请求内联，进化引擎依旧只吐 JSON。
+        start_engine(args.model, args.port, args.ctx, grammar=None, ngl=args.ngl)
+        _log("引擎就绪（无 grammar 锁，可兼作聊天模型），端口 %d。Ctrl+C 退出。" % args.port)
         try:
             while True:
                 time.sleep(3600)
@@ -205,7 +232,7 @@ def _main():
         if not args.summary:
             print("propose 模式需要 --summary", file=sys.stderr)
             sys.exit(2)
-        out = propose(args.port, args.summary, args.max)
+        out = propose(args.port, args.summary, args.max, grammar_path=args.grammar)
         print(json.dumps(out, ensure_ascii=False, indent=2))
 
 
