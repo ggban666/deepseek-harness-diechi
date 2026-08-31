@@ -13,11 +13,14 @@
  * @module @deepseek-ai/dsh-host-diechi-evolve
  */
 
+import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/cordis-plugin-loader'
 import { dshHomeDir } from '@deepseek-ai/dsh-host-skill-store'
 import { EvolveDb } from './db.ts'
 import { EvolutionService, type SupervisorLike } from './service.ts'
+import { FileSkillSink } from './sink.ts'
+import { buildClusterSummary, runEngineAndPropose, isEngineReady } from './engine.ts'
 import type { ProposalReview } from './types.ts'
 
 /** 监督者 Service 扩展（带 onDecision 订阅 API）。 */
@@ -27,7 +30,17 @@ type SupervisorWithEvents = SupervisorLike & {
 
 // 重新导出供测试和其他包使用。
 export { EvolveDb } from './db.ts'
-export { EvolutionService, type SupervisorLike } from './service.ts'
+export { EvolutionService, type SupervisorLike, type CapabilitySink, GOLDEN_SET_FLOOR } from './service.ts'
+export { FileSkillSink } from './sink.ts'
+export {
+  validateProposals,
+  buildEnginePrompt,
+  generateDrafts,
+  runEngineAndPropose,
+  isEngineReady,
+  buildClusterSummary,
+  type NegativeSampleLike,
+} from './engine.ts'
 export type * from './types.ts'
 
 /** Cordis 插件名。 */
@@ -93,7 +106,10 @@ export function apply(ctx: Context): void {
     authorizeScope: () => undefined,
     onDecision: () => () => undefined,
   }
-  const service = new EvolutionService(ctx, db, supervisor)
+  // M3：文件型固化库 sink——patch-skill / add-skill 提议 allowed 后真正落到
+  // $DSH_HOME/skills/*.md（只改 md 永不改代码）。注入后「诚实降级」路径不再触发。
+  const sink = new FileSkillSink(join(dshHomeDir(), 'skills'))
+  const service = new EvolutionService(ctx, db, supervisor, 'diechi-evolve', sink)
 
   // 把 ctx.evolution 提供给后续插件。
   ctx.provide('evolution', service as unknown as EvolutionServiceInterface)
@@ -151,4 +167,38 @@ export function apply(ctx: Context): void {
   }, cleanupIntervalSec * 1000)
   if (typeof cleanupHandle.unref === 'function') cleanupHandle.unref()
   ctx.effect(() => () => clearInterval(cleanupHandle), 'diechi-evolve: 关闭 cleanup timer')
+
+  // M4：进化引擎周期驱动——空闲窗口把负样本聚类喂给 llama.cpp 引擎，产出提议落库。
+  // 引擎默认 1 小时跑一次（纯 CPU、空闲调度，不抢主模型 GPU/对话延迟）。
+  // 引擎不可用（没起 llama-server）/ 无足够样本时静默跳过，绝不阻塞主流程。
+  const engineIntervalSec = (() => {
+    try {
+      const settings = ctx.get('settings') as { get?: (p: string) => unknown } | undefined
+      const v = settings?.get?.('evolution.engineIntervalSec')
+      if (typeof v === 'number' && v > 0) return v
+    } catch { /* ignore */ }
+    return 3600
+  })()
+  const engineHandle = setInterval(() => {
+    void (async () => {
+      try {
+        if (rawSupervisor === undefined) return
+        const samples = supervisor.listNegativeSamples(1000)
+        const summary = buildClusterSummary(samples)
+        if (!summary) return
+        // 引擎未就绪时不尝试——避免每次空等 180s 超时。
+        if (!(await isEngineReady())) return
+        const n = await runEngineAndPropose(service, summary)
+        if (n > 0) {
+          // eslint-disable-next-line no-console
+          console.log(`[diechi-evolve] 引擎产出 ${n} 条提议（基于 ${samples.length} 条负样本聚类）`)
+        }
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.error('[diechi-evolve] 引擎周期驱动失败', error)
+      }
+    })()
+  }, engineIntervalSec * 1000)
+  if (typeof engineHandle.unref === 'function') engineHandle.unref()
+  ctx.effect(() => () => { clearInterval(engineHandle) }, 'diechi-evolve: 关闭进化引擎 timer')
 }

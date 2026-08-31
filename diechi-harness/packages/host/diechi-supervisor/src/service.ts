@@ -17,6 +17,7 @@ import {
 import { SupervisorDb } from './db.ts'
 import { CapabilityGate } from './gate.ts'
 import type { GateConfig, GateInput, GateResult } from './gate.ts'
+import { CBS_V1, CbsRunner } from './cbs.ts'
 import type {
   AgentRoleService,
   SupervisionContext,
@@ -280,6 +281,49 @@ export class SupervisorService implements SupervisionContext {
   /** 列出最近体感样本。 */
   listPositiveSamples(limit = 100): readonly PositiveSampleRow[] {
     return this.db.listPositiveSamples(limit)
+  }
+
+  /**
+   * M3：对话路径的价值信号写入点（负样本重定义的一半）。
+   *
+   * 此前 negative_samples 的唯一写入点是闸拦截（watchdog 崩溃路径）——系统越崩越瘫。
+   * 现在「用户返工」成为一等公民：user-undo / explicit-bad 在写正样本表（C(t) 分母）
+   * 的同时，写一条 reason='user-rework' 的负样本，让 evolve 能聚类出 patch-skill。
+   * 崩溃路径照旧写入但进化侧降权（analyzeSamples 只在 scope 零正样本时才考虑冻结）。
+   */
+  recordUserSignal(
+    scope: string,
+    signal: PositiveSignal,
+    detail?: { payload?: unknown; latencyMs?: number; costUnits?: number; source?: string },
+  ): { positiveId: number; negativeId: number | null } {
+    const positiveId = this.recordSignal(scope, signal, detail)
+    if (signal !== 'user-undo' && signal !== 'explicit-bad') {
+      return { positiveId, negativeId: null }
+    }
+    let negativeId: number | null = null
+    try {
+      negativeId = this.db.insertNegativeSample(
+        scope,
+        JSON.stringify(detail?.payload ?? {}),
+        'flag-review',
+        'user-rework',
+        detail?.source ?? 'dialogue',
+      )
+    } catch {
+      // 负样本写失败不影响正样本（C(t) 分母优先保住）
+    }
+    return { positiveId, negativeId }
+  }
+
+  /**
+   * M3：golden set 回归——提议生效前后的判据。
+   * 跑 CBS_V1 基准集（liveness/safety/pii 三族，确定性查表测试），返回一次通过率。
+   * evolve 的 reviewProposal 用它做双门之一：提议 allowed 后 C 若跌破地板，
+   * 提议自动降级为 superseded（A1 回归门 C′≥C−ε 的工程落地）。
+   */
+  runGoldenSet(): { c: number; passed: number; total: number } {
+    const result = new CbsRunner(CBS_V1).run(this.db)
+    return { c: result.cScore, passed: result.passed, total: result.total }
   }
 
   /**

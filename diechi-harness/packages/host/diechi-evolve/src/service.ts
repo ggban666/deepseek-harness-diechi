@@ -46,6 +46,8 @@ export interface SupervisorLike {
   listPositiveSamples?(
     limit: number,
   ): readonly { id: number; scope: string; signal: string; created_at?: string }[]
+  /** M3 新增：golden set 回归（CBS 基准集一次通过率）。可选——老实现没有时跳过回归门。 */
+  runGoldenSet?(): { c: number; passed: number; total: number }
   freezeRule(id: string, reason: string, frozenBy?: string): void
   authorizeScope(scope: string, grantedBy?: string): void
   revokeAuthorization(scope: string): boolean
@@ -64,7 +66,12 @@ export interface CapabilitySink {
   addPrompt(id: string, details: string): void
   reRoute(id: string, details: string): void
   pruneCache(id: string, details: string): void
+  /** M3：给现有技能（md）追加补丁段落——只改 md，永不改代码。 */
+  patchSkill(id: string, patch: string): void
 }
+
+/** M3：golden set 回归门地板。allowed 的提议生效前跑 CBS，c 低于此值 → 自动 superseded。 */
+export const GOLDEN_SET_FLOOR = 0.5
 
 /** 提议排序分：能力增量减去成本代价。ΔK 为负（省钱）时分数更高。 */
 function proposalScore(d: ProposalDraft): number {
@@ -243,6 +250,23 @@ export class EvolutionService {
           estimatedDc: 0.05 * Math.min(1, b.bad / 10),
           estimatedDk: 0,
         })
+        // M3：返工样本同时出 patch-skill 提议——「这么做更好」而不是「别再做了」。
+        // 只改对应技能 md（persona/知识/流程），永不改代码；target 指向固化库技能 id。
+        drafts.push({
+          target: scope,
+          change: {
+            kind: 'patch-skill',
+            id: `skill:${scope}`,
+            details: `根据 ${b.bad} 次用户返工，修补技能 skill:${scope} 的方法论/边界段落：`
+              + '把返工场景的正确做法写进 ## B — 边界（易错点）与 ## E — 可执行步骤（判停条件）。'
+              + '补丁由人工 review 后生效，原文永不覆盖（只追加版本化补丁段落）',
+          },
+          evidence: b.ids,
+          rationale: `${scope} 返工率 ${(1 - rate).toFixed(2)}：同类失败重复出现说明知识库缺一块。patch-skill 是唯一不触碰代码、不冻结行为的建设性改进——失败变成知识。`,
+          rollbackPlan: '补丁段落带 proposal id 标记，删除该段落即回退；原技能正文永不修改。',
+          estimatedDc: 0.04 * Math.min(1, b.bad / 10),
+          estimatedDk: -0.02,
+        })
         if (b.bad >= DEFAULT_THRESHOLDS.skillMaturity) {
           drafts.push({
             target: scope,
@@ -290,7 +314,7 @@ export class EvolutionService {
         },
         evidence: list.slice(0, 10).map((s) => s.id),
         rationale: `${reason} 在 ${topScope} 上累计 ${list.length} ≥ ${DEFAULT_THRESHOLDS.reasonCount}，且该 scope 零正样本——冻结不会损失任何已验证的能力。`,
-        rollbackPlan: `人工 reviewProposal(id, 'denied') 或 revokeAuthorization 解冻。`,
+        rollbackPlan: '人工 reviewProposal 判 denied 或 revokeAuthorization 即可解冻。',
         estimatedDc: 0,
         estimatedDk: -0.01,
         needsHumanConfirm: true,
@@ -320,13 +344,35 @@ export class EvolutionService {
   }
 
   /**
-   * 审阅一条提议：allowed 时由 host 调 supervisor.freezeRule / authorizeScope 把副作用落库；
+   * 审阅一条提议：allowed 时先过 golden set 回归门，再由 host 调
+   * supervisor.freezeRule / authorizeScope / 固化库 sink 把副作用落库；
    * denied / superseded 不落。
-   * P2 阶段：allowed 的副作用由 host 在 reviewProposal 后调 applyProposal() 完成。
    *
-   * @returns 审阅结果（含 id / status / reviewed_at）。
+   * M3 双门：①golden set（CBS 一次通过率 ≥ GOLDEN_SET_FLOOR，未过自动降级
+   * superseded 并附 rejectedReason）②add-rule 类的 needsHumanConfirm 由 UI 层保证。
+   *
+   * @returns 审阅结果（含 id / status / reviewed_at / goldenSet）。
    */
   reviewProposal(id: number, decision: 'allowed' | 'denied' | 'superseded'): ProposalReview {
+    // golden set 门：只对 allowed 生效。跑分是确定性查表测试，不调 LLM（A3）。
+    let golden: { c: number; passed: number; total: number } | undefined
+    if (decision === 'allowed' && typeof this.supervisor.runGoldenSet === 'function') {
+      try {
+        golden = this.supervisor.runGoldenSet()
+      } catch {
+        golden = undefined // 跑不了基准就不拦——诚实降级，与「无 sink 不落地」同一原则
+      }
+      if (golden !== undefined && golden.total > 0 && golden.c < GOLDEN_SET_FLOOR) {
+        this.db.reviewProposal(id, 'superseded')
+        return {
+          id,
+          status: 'superseded',
+          reviewed_at: new Date().toISOString(),
+          goldenSet: golden,
+          rejectedReason: `golden set 一次通过率 ${golden.c.toFixed(2)} 低于地板 ${GOLDEN_SET_FLOOR}——当前基座不可靠，任何改动先修基座（A1 回归门）`,
+        }
+      }
+    }
     const ok = this.db.reviewProposal(id, decision)
     if (!ok) {
       throw new Error(`reviewProposal 失败：id=${id} 不存在或已审阅`)
@@ -334,11 +380,15 @@ export class EvolutionService {
     if (decision === 'allowed') {
       this.applyProposal(id)
     }
-    return {
+    const review: ProposalReview = {
       id,
       status: decision as ProposalStatus,
       reviewed_at: new Date().toISOString(),
     }
+    if (golden !== undefined) {
+      return { ...review, goldenSet: golden }
+    }
+    return review
   }
 
   // ---- 列表 API ----
@@ -393,7 +443,7 @@ export class EvolutionService {
 
     // ---- 新类型：走 L4 固化库（未注入 sink 则只标记 allowed，不假装生效）----
     if (change.kind === 'add-skill' || change.kind === 'add-case' || change.kind === 'add-prompt'
-      || change.kind === 're-route' || change.kind === 'prune-cache') {
+      || change.kind === 're-route' || change.kind === 'prune-cache' || change.kind === 'patch-skill') {
       const sink = this.sink
       if (sink === undefined) {
         // 诚实降级：不写任何东西，也不抛错。审计靠 proposals 行本身（status='allowed' + change.details）。
@@ -404,6 +454,7 @@ export class EvolutionService {
       else if (change.kind === 'add-case') sink.addCase(change.id, detail)
       else if (change.kind === 'add-prompt') sink.addPrompt(change.id, detail)
       else if (change.kind === 're-route') sink.reRoute(change.id, detail)
+      else if (change.kind === 'patch-skill') sink.patchSkill(change.id, detail)
       else sink.pruneCache(change.id, detail)
       return
     }

@@ -26,14 +26,13 @@ import { CBS_V1, CbsRunner, costOf, type CbsResult } from './cbs.ts'
 // "Remote boundary type X must be exported from a public non-root type subpath"。
 import type {
   EvolutionCbsOutcome, EvolutionCbsView, EvolutionHistoryPoint, EvolutionProposalView,
-  EvolutionSignalTally, EvolutionSnapshot, PositiveSignal,
+  EvolutionSignalTally, EvolutionSnapshot, PositiveSignal, RecordSignalInput, RecordSignalResult,
 } from './types.ts'
 
 export type {
   EvolutionCbsOutcome, EvolutionCbsView, EvolutionHistoryPoint, EvolutionProposalView,
-  EvolutionSignalTally, EvolutionSnapshot,
+  EvolutionSignalTally, EvolutionSnapshot, RecordSignalInput, RecordSignalResult,
 } from './types.ts'
-
 
 /**
  * 自进化度量网关。
@@ -86,6 +85,37 @@ export class EvolutionGateway extends TypertRemoteService {
   @Remote('signals')
   signals(limit: number): EvolutionSignalTally {
     return tally(this.service.listPositiveSamples(limit))
+  }
+
+  /**
+   * M3：对话路径价值信号写入（唯一的第二个写方法）。
+   * user-undo / explicit-bad 会同时写一条 reason='user-rework' 负样本——
+   * 这是「负样本重定义」的落地：返工和崩溃一样可聚类、可出提议。
+   * 仍是人类动作驱动（前端点赞/点踩按钮），不是系统自发写入，不违反网关只读原则。
+   */
+  @Remote('recordSignal')
+  recordSignal(input: RecordSignalInput): RecordSignalResult {
+    const scope = input.scope ?? ''
+    const signal = input.signal ?? ''
+    if (scope === '') return { ok: false, error: 'scope required' }
+    const allowed: readonly PositiveSignal[] = ['accepted', 'no-rework', 'user-undo', 'explicit-bad']
+    if (!allowed.includes(signal as PositiveSignal)) {
+      return { ok: false, error: `signal must be one of ${allowed.join('/')}` }
+    }
+    try {
+      const r = this.service.recordUserSignal(scope, signal as PositiveSignal, {
+        payload: input.payload,
+        source: input.source ?? 'dialogue',
+      })
+      const out: { ok: boolean; positiveId?: number; negativeId?: number; error?: string } = {
+        ok: true,
+        positiveId: r.positiveId,
+      }
+      if (r.negativeId !== null) out.negativeId = r.negativeId
+      return out
+    } catch (exc) {
+      return { ok: false, error: String(exc).slice(0, 200) }
+    }
   }
 
   /** 提议清单（evolve 未装载时返回空 + available=false）。 */

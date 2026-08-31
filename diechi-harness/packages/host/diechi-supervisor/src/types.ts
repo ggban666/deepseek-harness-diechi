@@ -192,3 +192,23 @@ export interface EvolutionCbsOutcome {
   readonly cbs: EvolutionCbsView
   readonly snapshot: EvolutionSnapshot
 }
+
+/**
+ * M3：对话路径价值信号写入的入参。
+ * 字段全部可选——RPC 边界上不能信调用方，服务端统一 `?? ''` 兜底后再校验，
+ * 校验失败返回 ok:false，绝不抛异常穿透到前端。
+ */
+export interface RecordSignalInput {
+  readonly scope?: string
+  readonly signal?: string
+  readonly payload?: unknown
+  readonly source?: string
+}
+
+/** M3：价值信号写入结果。negativeId 只在 user-undo / explicit-bad 时出现。 */
+export interface RecordSignalResult {
+  readonly ok: boolean
+  readonly positiveId?: number
+  readonly negativeId?: number
+  readonly error?: string
+}

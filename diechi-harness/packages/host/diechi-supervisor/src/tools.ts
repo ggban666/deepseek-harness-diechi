@@ -9,6 +9,8 @@
  * 5. supervisor_review_proposal — 写（P2 阶段 proposals 接入后启用）
  * 6. supervisor_signal_update_ready — 写（caller 必须是 human）
  *    向独立 watchdog 进程写升级信号，由后者执行「杀 → 换补丁 → 拉起」。
+ * 7. supervisor_record_signal — 写（M3）
+ *    记录用户价值信号，user-undo / explicit-bad 同时写 reason=user-rework 负样本。
  *
  * @module @deepseek-ai/dsh-host-diechi-supervisor/tools
  */
@@ -18,6 +20,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import { mkdir, writeFile, rename } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { SupervisorService } from './service.ts'
+import type { PositiveSignal } from './types.ts'
 
 /** 一条负样本 RPC 载荷（与 db 行的精简版）。 */
 export interface NegativeSampleRpc {
@@ -344,6 +347,72 @@ export function registerSupervisorTools(ctx: Context, service: SupervisorService
     },
   })
   disposers.push(ctx.tools.register(signalTool))
+
+  // ---- 7. M3：记录用户价值信号（对话路径负样本写入点）----
+
+  const recordSignalTool = defineTool({
+    name: 'supervisor_record_signal',
+    description: '记录一条用户价值信号（采纳 accepted / 无返工 no-rework / 用户撤销 user-undo / 明确差评 explicit-bad）。'
+      + '这是 C(t) 一次通过率的分母来源；user-undo / explicit-bad 会同时写一条 reason=user-rework 的负样本，'
+      + '供升级设计者聚类出 patch-skill 提议。埋点绝不影响主决策（A3）。',
+    parameters: {
+      scope: { type: 'string', required: true, description: '信号发生的 scope（如任务/技能名）' },
+      signal: { type: 'string', required: true, description: 'accepted | no-rework | user-undo | explicit-bad' },
+      payload: { type: 'string', description: '可选补充信息（原问题摘要等）' },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          ok: { type: 'boolean', required: true },
+          positiveId: { type: 'number' },
+          negativeId: { type: 'number' },
+          error: { type: 'string' },
+        },
+      },
+      render: (_args, value) => {
+        const v = value
+        return [{
+          type: 'text',
+          text: v.ok
+            ? `信号已记录（positive #${v.positiveId ?? '-'}${v.negativeId !== undefined ? `，负样本 #${v.negativeId}` : ''}）`
+            : `记录失败：${v.error ?? 'unknown'}`,
+        }]
+      },
+    },
+    // 同步实现但签名要求返回 Promise：这里没有 await 可写，async 只为满足工具契约。
+    // eslint-disable-next-line typescript/require-await
+    async execute(args) {
+      const scope = args.scope.trim()
+      if (scope === '') return { ok: false, error: 'scope 不能为空' }
+      const signal = args.signal.trim()
+      const allowed: readonly PositiveSignal[] = ['accepted', 'no-rework', 'user-undo', 'explicit-bad']
+      if (!allowed.includes(signal as PositiveSignal)) {
+        return { ok: false, error: `signal 必须是 ${allowed.join(' / ')}` }
+      }
+      try {
+        const r = service.recordUserSignal(scope, signal as PositiveSignal, {
+          payload: args.payload ?? '',
+          source: 'tool',
+        })
+        return r.negativeId !== null
+          ? { ok: true, positiveId: r.positiveId, negativeId: r.negativeId }
+          : { ok: true, positiveId: r.positiveId }
+      } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : String(error) }
+      }
+    },
+    presentCall(args) {
+      return {
+        card: 'terminal',
+        title: `Record signal ${args.signal}`,
+        kind: 'edit',
+        rawInput: args.scope,
+      }
+    },
+  })
+  disposers.push(ctx.tools.register(recordSignalTool))
 
   // 全部 disposers 一次性释放。
   return () => {

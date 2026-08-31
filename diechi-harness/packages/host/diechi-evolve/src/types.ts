@@ -34,6 +34,12 @@ export type ProposalChangeKind =
    * A1 要求能力只增不减；删只在"删掉的是负债"时成立，故门槛最高。
    */
   | 'prune-cache'
+  /**
+   * M3：给现有技能打补丁——只改 persona / 知识 / 流程（md 文件），**永不改代码**。
+   * 这是打破「只有一个动作=禁止」架构死结的关键一环：返工聚类的产出不再是
+   * 「别再做了」，而是「这么做更好」。rollbackPlan 必须说明如何回退补丁段落。
+   */
+  | 'patch-skill'
   /** 历史类型：启动时把已知该冻结的基线化。新逻辑不再生成，保留仅为兼容旧数据。 */
   | 'add-bootstrap'
 
@@ -89,6 +95,10 @@ export interface ProposalReview {
   readonly id: number
   readonly status: ProposalStatus
   readonly reviewed_at: string
+  /** M3：golden set 回归结果（allowed 时跑；c 低于地板时提议自动降级 superseded）。 */
+  readonly goldenSet?: { readonly c: number; readonly passed: number; readonly total: number }
+  /** 降级原因（golden set 未过时填写）。 */
+  readonly rejectedReason?: string
 }
 
 /** 提议被允许后实际应用到监督者数据库的副作用（由 host 在 review 后调）。 */

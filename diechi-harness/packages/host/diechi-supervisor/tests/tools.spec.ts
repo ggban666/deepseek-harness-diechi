@@ -32,7 +32,7 @@ function stubCtx() {
 }
 
 describe('diechi-supervisor / tools', () => {
-  it('registers exactly 5 tools with the expected names', () => {
+  it('registers exactly 7 tools with the expected names', () => {
     const { service, cleanup } = newEnv()
     try {
       const seen: string[] = []
@@ -52,6 +52,7 @@ describe('diechi-supervisor / tools', () => {
         'supervisor_revoke_authorization',
         'supervisor_review_proposal',
         'supervisor_signal_update_ready',
+        'supervisor_record_signal',
       ])
       unreg()
     } finally {
@@ -96,6 +97,36 @@ describe('diechi-supervisor / tools', () => {
       expect(() => unreg()).not.toThrow()
       // 多次调不抛
       expect(() => unreg()).not.toThrow()
+    } finally {
+      cleanup()
+    }
+  })
+
+  it('M3：record_signal 工具 —— user-undo 同时写正样本与 user-rework 负样本', async () => {
+    const { service, db, cleanup } = newEnv()
+    try {
+      const tools = new Map<string, { execute: (a: never) => unknown }>()
+      const ctx = {
+        tools: {
+          register: (tool: { name: string; execute: (a: never) => unknown }) => {
+            tools.set(tool.name, tool)
+            return () => {}
+          },
+        },
+      }
+      const unreg = registerSupervisorTools(ctx as never, service)
+      const tool = tools.get('supervisor_record_signal')
+      expect(tool).toBeDefined()
+      // 非法 signal 被挡住，不写库
+      const bad = await tool?.execute({ scope: 'test:tool', signal: 'nope' } as never)
+      expect(bad).toMatchObject({ ok: false })
+      // 合法返工信号：正样本 + 负样本双写
+      const ok = await tool?.execute({ scope: 'test:tool', signal: 'user-undo' } as never)
+      expect(ok).toMatchObject({ ok: true })
+      const neg = service.listNegativeSamples(10).find(s => s.reason === 'user-rework')
+      expect(neg?.scope).toBe('test:tool')
+      expect(db.listPositiveSamples(10).length).toBeGreaterThan(0)
+      unreg()
     } finally {
       cleanup()
     }
