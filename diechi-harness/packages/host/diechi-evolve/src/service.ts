@@ -11,6 +11,7 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import { EvolveDb } from './db.ts'
+import type { ScopeResolver } from './scope-map.ts'
 import type {
   ProposalChange,
   ProposalDraft,
@@ -46,8 +47,10 @@ export interface SupervisorLike {
   listPositiveSamples?(
     limit: number,
   ): readonly { id: number; scope: string; signal: string; created_at?: string }[]
-  /** M3 新增：golden set 回归（CBS 基准集一次通过率）。可选——老实现没有时跳过回归门。 */
-  runGoldenSet?(): { c: number; passed: number; total: number }
+  /** M3 新增：golden set 回归（CBS 基准集一次通过率 + 归一化成本）。可选——老实现没有时跳过回归门。 */
+  runGoldenSet?(): { c: number; passed: number; total: number; k?: number }
+  /** S0 新增：把一次回归结果写进 capability_snapshots（C/K 时间序列）。可选。 */
+  recordSnapshot?(cbsVersion: string, cScore: number, kScore: number, sampleCount: number, commitId?: string): void
   freezeRule(id: string, reason: string, frozenBy?: string): void
   authorizeScope(scope: string, grantedBy?: string): void
   revokeAuthorization(scope: string): boolean
@@ -88,7 +91,28 @@ export class EvolutionService {
     private readonly proposer: string = 'diechi-evolve',
     /** L4 固化库写入口（可选；缺它则新类型提议只记录不落地）。 */
     private readonly sink?: CapabilitySink,
+    /** M5：scope → 真实技能 的确定性解析器（可选；缺它则 target 保持原始 scope）。 */
+    private readonly resolver?: ScopeResolver,
+    /** 自动 apply 模式（来自 settings.yaml `evolution.autoApply`）：
+     *  - 'off'       关闭，纯人工审阅；
+     *  - 'safe-only' 只自动落地建设性、零/负成本的固化类提议（add-skill/add-case/add-prompt/patch-skill）；
+     *  - 'all'       在 safe-only 基础上额外放行 re-route / prune-cache。
+     *  红线类（add-rule / revise-scope / add-bootstrap，动 frozen_rules 或授权策略）无论哪种模式
+     *  都不自动 apply，永远留给人工终审——这就是「保留人工终审开关」的工程含义。 */
+    private readonly autoApplyMode: 'off' | 'safe-only' | 'all' = 'off',
+    /** 事件触发防抖窗口（ms）：监督者每产生一次决策就（防抖后）重跑一次通过率分析，
+     *  让闭环"一有反馈就学"，不必等周期定时器。高频决策下用防抖合并，避免雪崩。 */
+    private readonly feedbackDebounceMs: number = 30_000,
   ) {}
+
+  /** 永远留给人工终审的红线类提议（写 frozen_rules / 改授权策略）。 */
+  private static readonly HUMAN_CONFIRM_KINDS = new Set<ProposalChange['kind']>([
+    'add-rule', 'revise-scope', 'add-bootstrap',
+  ])
+  /** safe-only 模式自动 apply 的「建设性、零/负成本」固化类提议。 */
+  private static readonly SAFE_KINDS = new Set<ProposalChange['kind']>([
+    'add-skill', 'add-case', 'add-prompt', 'patch-skill',
+  ])
 
   /**
    * 处理单次 supervision/decision 事件：累计 deny / flag-review 计数。
@@ -178,7 +202,7 @@ export class EvolutionService {
     const ids: number[] = []
     for (const draft of drafts) {
       const id = this.propose(draft)
-      ids.push(id)
+      if (id > 0) ids.push(id)
     }
     return ids
   }
@@ -325,21 +349,65 @@ export class EvolutionService {
     const ranked = [...drafts].sort((a, b) => proposalScore(b) - proposalScore(a))
     const ids: number[] = []
     for (const draft of ranked.slice(0, DEFAULT_THRESHOLDS.maxDraftsPerRun)) {
-      ids.push(this.propose(draft))
+      const id = this.propose(draft)
+      if (id > 0) ids.push(id)
     }
     return ids
   }
 
   /**
+   * 事件触发入口：监督者每次决策（allow→正样本 / deny→负样本）后由 host 调一次。
+   * 防抖合并高频决策，窗口内末次触发才真正跑一次通过率分析（analyzeSamples）。
+   * 周期定时器仍保留作兜底（覆盖不走 decide() 的纯用户返工信号）。
+   */
+  private feedbackTimer: ReturnType<typeof setTimeout> | null = null
+  notifyFeedback(): void {
+    if (this.feedbackTimer !== null) clearTimeout(this.feedbackTimer)
+    this.feedbackTimer = setTimeout(() => {
+      this.feedbackTimer = null
+      try {
+        const ids = this.analyzeSamples()
+        if (ids.length > 0) {
+          // eslint-disable-next-line no-console
+          console.log(`[diechi-evolve] analyzeSamples 产出 ${ids.length} 条（一次通过率驱动·事件触发）`)
+        }
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.error('[diechi-evolve] analyzeSamples 失败', e)
+      }
+    }, this.feedbackDebounceMs)
+  }
+
+  /**
    * 写一条提议到 proposals 表。
-   * @returns 写入后的自增 id。
+   * 去重：同 target+kind 的 pending 提议若内容高度相似（视为同一改进），
+   * 不再重复插入，直接复用已有 id——避免静态负样本下定时器每轮刷出近重复提议。
+   * M5：落库前统一把 target 确定性解析到真实技能 id（覆盖引擎 / analyzeSamples /
+   * analyzeNegativeSamples 所有路径），让 patch-skill 落到真实技能 md。
+   * @returns 写入后的自增 id；命中重复时返回已有提议的 id。
    */
   propose(draft: ProposalDraft): number {
+    // M5：所有路径的 target 都是原始 scope（如 e2e-engine-drill），落库前确定性改写。
+    let d = draft
+    if (this.resolver) {
+      const r = this.resolver(draft.target)
+      if (r) {
+        d = { ...draft, target: r, change: { ...draft.change, id: `skill:${r}` } }
+      }
+    }
+    const kind = d.change.kind
+    for (const e of this.db.listPendingByTarget(d.target)) {
+      const c = parseChange(e.change)
+      if (c && c.kind === kind && similarDetails(c.details, d.change.details)) {
+        // 命中重复：复用已有提议，返回 -1 表示"未新增"（诚实，不假装产出）
+        return -1
+      }
+    }
     return this.db.insertProposal(
       this.proposer,
-      draft.target,
-      serializeChange(draft.change, draft),
-      draft.evidence.join(','),
+      d.target,
+      serializeChange(d.change, d),
+      d.evidence.join(','),
     )
   }
 
@@ -353,10 +421,14 @@ export class EvolutionService {
    *
    * @returns 审阅结果（含 id / status / reviewed_at / goldenSet）。
    */
-  reviewProposal(id: number, decision: 'allowed' | 'denied' | 'superseded'): ProposalReview {
+  reviewProposal(
+    id: number,
+    decision: 'allowed' | 'denied' | 'superseded',
+    opts?: { auto?: boolean; skipGoldenGate?: boolean },
+  ): ProposalReview {
     // golden set 门：只对 allowed 生效。跑分是确定性查表测试，不调 LLM（A3）。
     let golden: { c: number; passed: number; total: number } | undefined
-    if (decision === 'allowed' && typeof this.supervisor.runGoldenSet === 'function') {
+    if (decision === 'allowed' && !opts?.skipGoldenGate && typeof this.supervisor.runGoldenSet === 'function') {
       try {
         golden = this.supervisor.runGoldenSet()
       } catch {
@@ -378,7 +450,7 @@ export class EvolutionService {
       throw new Error(`reviewProposal 失败：id=${id} 不存在或已审阅`)
     }
     if (decision === 'allowed') {
-      this.applyProposal(id)
+      this.applyProposal(id, opts)
     }
     const review: ProposalReview = {
       id,
@@ -389,6 +461,72 @@ export class EvolutionService {
       return { ...review, goldenSet: golden }
     }
     return review
+  }
+
+  /**
+   * **自动 apply 定时器入口**：周期性扫描 pending 提议，对安全类别自动走
+   * `reviewProposal('allowed')`，让三架构闭环从"会学"走到"会改自己"。
+   *
+   * 安全边界（与 A1/A2/A3 同源，刻意保守）：
+   * - `autoApplyMode==='off'` 时直接返回 0——不开就纯人工；
+   * - 红线类（`HUMAN_CONFIRM_KINDS`：add-rule / revise-scope / add-bootstrap，动 frozen_rules
+   *   或授权策略）任何模式都不自动 apply，永远留给人工终审；
+   * - `safe-only` 只放行 `SAFE_KINDS`（add-skill / add-case / add-prompt / patch-skill，
+   *   建设性、ΔK≤0），re-route（加算力）与 prune-cache 留给人工；
+   * - `all` 在以上基础上额外放行 re-route / prune-cache；
+   * - **每条自动 apply 都必须先过 golden set 回归门**（runGoldenSet 一次通过率
+   *   ≥ GOLDEN_SET_FLOOR）。跑不了基准 / 低于地板 → 整轮跳过，绝不裸放行
+   *   （防奖励黑客：改动只有"不降低已验证能力"才被允许）。
+   *
+   * golden set 每个 tick 只跑一次，所有候选共用同一基线（避免逐条重复跑分）。
+   *
+   * @returns 本次自动落地的提议条数。
+   */
+  async autoApplyPending(): Promise<number> {
+    if (this.autoApplyMode === 'off') return 0
+
+    // golden set 回归门：每个 tick 只跑一次，作为整个 tick 的放行前提。
+    // 跑不了基准 → 整轮跳过（留给人工），绝不裸放行。
+    if (typeof this.supervisor.runGoldenSet !== 'function') {
+      // eslint-disable-next-line no-console
+      console.log('[diechi-evolve] autoApply 跳过本轮（无 golden set 能力，留给人工）')
+      return 0
+    }
+    let golden: { c: number; passed: number; total: number } | undefined
+    try {
+      golden = this.supervisor.runGoldenSet()
+    } catch {
+      // eslint-disable-next-line no-console
+      console.log('[diechi-evolve] autoApply 跳过本轮（golden set 异常，留给人工）')
+      return 0
+    }
+    if (golden.total > 0 && golden.c < GOLDEN_SET_FLOOR) {
+      // eslint-disable-next-line no-console
+      console.log(`[diechi-evolve] autoApply 跳过本轮（golden set ${golden.c.toFixed(2)} < ${GOLDEN_SET_FLOOR}）`)
+      return 0
+    }
+
+    const pending = this.listPending(200)
+    let applied = 0
+    for (const p of pending) {
+      const change = parseChange(p.change)
+      if (change === null) continue
+      // 红线类：任何模式都留给人工终审
+      if (EvolutionService.HUMAN_CONFIRM_KINDS.has(change.kind)) continue
+      // safe-only：只放行建设性固化类；re-route / prune-cache 留给人工
+      if (this.autoApplyMode === 'safe-only' && !EvolutionService.SAFE_KINDS.has(change.kind)) continue
+
+      try {
+        this.reviewProposal(p.id, 'allowed', { auto: true, skipGoldenGate: true })
+        applied++
+        // eslint-disable-next-line no-console
+        console.log(`[diechi-evolve] autoApply 已落地 #${p.id} kind=${change.kind}`)
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.error(`[diechi-evolve] autoApply 落 #${p.id} 失败`, e)
+      }
+    }
+    return applied
   }
 
   // ---- 列表 API ----
@@ -434,7 +572,7 @@ export class EvolutionService {
    * add-rule 写 frozen_rules（已有能力）；其余新类型（add-skill / add-case /
    * add-prompt / re-route / prune-cache）走 L4 固化库 sink——**没有 sink 就不落地**。
    */
-  private applyProposal(id: number): void {
+  private applyProposal(id: number, opts?: { auto?: boolean }): void {
     const row = this.db.getProposal(id)
     if (row === undefined) return
     if (row.status !== 'allowed') return
@@ -449,7 +587,7 @@ export class EvolutionService {
         // 诚实降级：不写任何东西，也不抛错。审计靠 proposals 行本身（status='allowed' + change.details）。
         return
       }
-      const detail = `由 proposal #${id} 落库：${change.details}`
+      const detail = `${opts?.auto ? '[AUTO-APPLIED] ' : ''}由 proposal #${id} 落库：${change.details}`
       if (change.kind === 'add-skill') sink.addSkill(change.id, detail)
       else if (change.kind === 'add-case') sink.addCase(change.id, detail)
       else if (change.kind === 'add-prompt') sink.addPrompt(change.id, detail)
@@ -573,4 +711,25 @@ function parseChange(raw: string): StoredChange | null {
     dk: 0,
     humanConfirm: false,
   }
+}
+
+/**
+ * 两条改进细节是否高度相似（视为同一提议）。
+ * 模型每次输出措辞略不同，故用：精确相等 / 包含关系 / token Jaccard ≥ 0.5 任一即判重。
+ */
+function similarDetails(a: string, b: string): boolean {
+  const na = a.trim()
+  const nb = b.trim()
+  if (!na || !nb) return false
+  if (na === nb) return true
+  if (na.includes(nb) || nb.includes(na)) return true
+  const split = (s: string): Set<string> =>
+    new Set(s.split(/[\s，。、；：,.;:！!？?]+/).filter(t => t.length > 0))
+  const ta = split(na)
+  const tb = split(nb)
+  if (ta.size === 0 || tb.size === 0) return false
+  let inter = 0
+  for (const t of ta) if (tb.has(t)) inter++
+  const union = ta.size + tb.size - inter
+  return union > 0 && inter / union >= 0.5
 }

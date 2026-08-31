@@ -321,9 +321,9 @@ export class SupervisorService implements SupervisionContext {
    * evolve 的 reviewProposal 用它做双门之一：提议 allowed 后 C 若跌破地板，
    * 提议自动降级为 superseded（A1 回归门 C′≥C−ε 的工程落地）。
    */
-  runGoldenSet(): { c: number; passed: number; total: number } {
+  runGoldenSet(): { c: number; passed: number; total: number; k?: number } {
     const result = new CbsRunner(CBS_V1).run(this.db)
-    return { c: result.cScore, passed: result.passed, total: result.total }
+    return { c: result.cScore, passed: result.passed, total: result.total, k: result.kScore }
   }
 
   /**

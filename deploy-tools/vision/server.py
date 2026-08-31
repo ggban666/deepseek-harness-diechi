@@ -598,7 +598,10 @@ async def vision_stream(req: VisionStreamRequest):
 def main():
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8080
     if cfg._vision_mode() == "mini":
-        perception.load_vision()
+        # 视觉模型改为懒加载：首个视觉请求时才占显存，空闲超过 VISION_IDLE_SEC
+        # 后由 perception 的后台守护线程自动释放。这样 8080 启动时几乎不占显存，
+        # 27B 进化引擎(8081) 可在视觉空闲期与之共存（8GB 显存不再被常驻占满）。
+        print("[vision] mini 模式：视觉模型懒加载（启动不占显存，空闲自动释放）", flush=True)
     else:
         print("[vision] cloud mode: 跳过本地模型加载（显存不占）", flush=True)
     try:

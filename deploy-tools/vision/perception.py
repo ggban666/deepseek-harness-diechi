@@ -4,6 +4,7 @@
 import asyncio
 import base64
 import io
+import os
 import threading
 import time
 
@@ -49,7 +50,7 @@ def load_vision():
 
 def _ensure_vision_loaded():
     """本地推理入口调用：按需懒加载 MiniCPM（云端模式下不占显存）。"""
-    global model
+    global model, _last_vision_use
     if model is not None:
         return
     if cfg._vision_mode() != "mini":
@@ -57,6 +58,7 @@ def _ensure_vision_loaded():
     with _vision_load_lock:
         if model is None:
             load_vision()
+            _last_vision_use = time.time()
 
 
 def unload_vision():
@@ -68,60 +70,117 @@ def unload_vision():
     print("[vision] 已释放本地模型，切换为云端模式", flush=True)
 
 
+# ---------- 空闲自动卸载（释放显存，供其他 GPU 任务共存） ----------
+# 视觉模型仅在推理期间占显存；空闲超过该秒数由守护线程自动 unload，
+# 让 27B 进化引擎(8081) 等需要显存的常驻任务能在空闲期共存。
+VISION_IDLE_SEC = float(os.environ.get("VISION_IDLE_SEC", "300"))
+_last_vision_use = 0.0
+_active_infers = 0
+_idle_lock = threading.Lock()
+
+
+def _vision_begin():
+    """标记一次推理开始（占用期间禁止空闲卸载）。"""
+    global _active_infers, _last_vision_use
+    with _idle_lock:
+        _active_infers += 1
+        _last_vision_use = time.time()
+
+
+def _vision_end():
+    """标记一次推理结束，并更新最后使用时间。"""
+    global _active_infers, _last_vision_use
+    with _idle_lock:
+        _active_infers -= 1
+        _last_vision_use = time.time()
+
+
+def _vision_idle_watcher():
+    """后台守护线程：视觉模型空闲超过 VISION_IDLE_SEC 后自动释放显存。"""
+    while True:
+        time.sleep(30)
+        try:
+            with _idle_lock:
+                idle_too_long = (
+                    model is not None
+                    and _active_infers == 0
+                    and (time.time() - _last_vision_use) > VISION_IDLE_SEC
+                )
+            if idle_too_long:
+                print(
+                    f"[vision] 空闲超过 {VISION_IDLE_SEC:.0f}s，自动释放视觉模型显存",
+                    flush=True,
+                )
+                unload_vision()
+        except Exception:
+            pass
+
+
+threading.Thread(target=_vision_idle_watcher, daemon=True, name="vision-idle-watcher").start()
+
+
 def run_vision(messages):
     """transformers 推理。messages 为 [{role, content:[{type, ...}]}]。"""
-    import copy
-    from transformers.video_utils import VideoMetadata
-    from PIL import Image
-    # apply_chat_template 会原地归一化 image_url -> image/url，先深拷贝保护原始结构
-    text = processor.apply_chat_template(copy.deepcopy(messages), add_generation_prompt=True)
-    images = []
-    videos = []
-    video_meta = []
-    for part in messages[-1]["content"]:
-        ptype = part.get("type", "")
-        if ptype in ("image", "image_url") or "image_url" in part:
-            if isinstance(part.get("image_url"), dict):
-                raw = part.get("image_url", {}).get("url", "") or part.get("image", "")
-            else:
-                raw = part.get("url", "") or part.get("image", "")
-            if raw.startswith("data:"):
-                raw = raw.split(",", 1)[1]
-            try:
-                images.append(Image.open(io.BytesIO(base64.b64decode(raw))).convert("RGB"))
-            except Exception:
-                continue
-        elif ptype == "video" and part.get("video") is not None:
-            frames, fps, duration = part["video"]
-            videos.append(frames)
-            video_meta.append(VideoMetadata(
-                total_num_frames=len(frames), fps=fps,
-                width=frames.shape[2], height=frames.shape[1],
-                duration=duration or (len(frames) / fps),
-            ))
-    if videos:
-        inputs = processor(text=[text], videos=videos, video_metadata=video_meta, return_tensors="pt").to("cuda")
-    elif images:
-        inputs = processor(text=[text], images=images, return_tensors="pt").to("cuda")
-    else:
-        inputs = processor(text=[text], return_tensors="pt").to("cuda")
-    with torch.inference_mode():
-        out = model.generate(**inputs, max_new_tokens=1024, temperature=0.2, do_sample=True)
-    gen = out[0][inputs["input_ids"].shape[1]:]
-    return processor.decode(gen, skip_special_tokens=True).strip()
+    _vision_begin()
+    try:
+        import copy
+        from transformers.video_utils import VideoMetadata
+        from PIL import Image
+        # apply_chat_template 会原地归一化 image_url -> image/url，先深拷贝保护原始结构
+        text = processor.apply_chat_template(copy.deepcopy(messages), add_generation_prompt=True)
+        images = []
+        videos = []
+        video_meta = []
+        for part in messages[-1]["content"]:
+            ptype = part.get("type", "")
+            if ptype in ("image", "image_url") or "image_url" in part:
+                if isinstance(part.get("image_url"), dict):
+                    raw = part.get("image_url", {}).get("url", "") or part.get("image", "")
+                else:
+                    raw = part.get("url", "") or part.get("image", "")
+                if raw.startswith("data:"):
+                    raw = raw.split(",", 1)[1]
+                try:
+                    images.append(Image.open(io.BytesIO(base64.b64decode(raw))).convert("RGB"))
+                except Exception:
+                    continue
+            elif ptype == "video" and part.get("video") is not None:
+                frames, fps, duration = part["video"]
+                videos.append(frames)
+                video_meta.append(VideoMetadata(
+                    total_num_frames=len(frames), fps=fps,
+                    width=frames.shape[2], height=frames.shape[1],
+                    duration=duration or (len(frames) / fps),
+                ))
+        if videos:
+            inputs = processor(text=[text], videos=videos, video_metadata=video_meta, return_tensors="pt").to("cuda")
+        elif images:
+            inputs = processor(text=[text], images=images, return_tensors="pt").to("cuda")
+        else:
+            inputs = processor(text=[text], return_tensors="pt").to("cuda")
+        with torch.inference_mode():
+            out = model.generate(**inputs, max_new_tokens=1024, temperature=0.2, do_sample=True)
+        gen = out[0][inputs["input_ids"].shape[1]:]
+        return processor.decode(gen, skip_special_tokens=True).strip()
+    finally:
+        _vision_end()
 
 
 def run_vision_text(text, max_new_tokens=1024):
     """纯文本推理（视频操作提炼第二阶段用，不吃图，省 token）。
     必须走 apply_chat_template：否则模型把输入当续写复述，不会按指令输出 JSON。"""
-    import copy
-    msgs = [{"role": "user", "content": [{"type": "text", "text": text}]}]
-    prompt = processor.apply_chat_template(copy.deepcopy(msgs), add_generation_prompt=True)
-    with torch.inference_mode():
-        inputs = processor(text=[prompt], return_tensors="pt").to("cuda")
-        out = model.generate(**inputs, max_new_tokens=int(max_new_tokens), temperature=0.2, do_sample=True)
-    gen = out[0][inputs["input_ids"].shape[1]:]
-    return processor.decode(gen, skip_special_tokens=True).strip()
+    _vision_begin()
+    try:
+        import copy
+        msgs = [{"role": "user", "content": [{"type": "text", "text": text}]}]
+        prompt = processor.apply_chat_template(copy.deepcopy(msgs), add_generation_prompt=True)
+        with torch.inference_mode():
+            inputs = processor(text=[prompt], return_tensors="pt").to("cuda")
+            out = model.generate(**inputs, max_new_tokens=int(max_new_tokens), temperature=0.2, do_sample=True)
+        gen = out[0][inputs["input_ids"].shape[1]:]
+        return processor.decode(gen, skip_special_tokens=True).strip()
+    finally:
+        _vision_end()
 
 
 def recognize_frame_jpeg(jpeg_bytes, max_new_tokens=80, cancel_ev=None):
@@ -129,6 +188,7 @@ def recognize_frame_jpeg(jpeg_bytes, max_new_tokens=80, cancel_ev=None):
     供摄像头会话的事件流累积（每 N 秒识别一帧，结果带时间戳入列）。"""
     if model is None:
         _ensure_vision_loaded()
+    _vision_begin()
     try:
         import copy
         from PIL import Image
@@ -153,6 +213,8 @@ def recognize_frame_jpeg(jpeg_bytes, max_new_tokens=80, cancel_ev=None):
         return processor.decode(gen, skip_special_tokens=True).strip()
     except Exception:
         return ""
+    finally:
+        _vision_end()
 
 
 try:
@@ -225,6 +287,7 @@ def run_vision_stream(messages, cancel_ev, max_new_tokens=120, temperature=0.2):
         streamer=streamer,
         stopping_criteria=StoppingCriteriaList([_CancelCriteria(cancel_ev)]),
     )
+    _vision_begin()
     with torch.inference_mode():
         thread = threading.Thread(
             target=model.generate, kwargs={**inputs, **gen_kwargs}, daemon=True
@@ -236,3 +299,4 @@ def run_vision_stream(messages, cancel_ev, max_new_tokens=120, temperature=0.2):
         finally:
             cancel_ev.set()
             thread.join(timeout=120)
+            _vision_end()

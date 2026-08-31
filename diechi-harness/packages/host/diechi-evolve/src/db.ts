@@ -110,6 +110,14 @@ export class EvolveDb {
     }[]
   }
 
+  /** 查某 target 下所有 pending 提议（含 change），供去重比对。 */
+  listPendingByTarget(target: string): readonly { id: number; change: string }[] {
+    this.assertOpen()
+    return this.db.prepare(
+      "SELECT id, change FROM proposals WHERE target = ? AND status = 'pending'",
+    ).all(target) as unknown as readonly { id: number; change: string }[]
+  }
+
   /** 列出所有提议（按时间倒序）。 */
   listAll(limit = 200): readonly {
     id: number
@@ -166,6 +174,14 @@ export class EvolveDb {
   }
 
   // ---- 读负样本（用监督者表） ----
+
+  /** 读负样本（含 payload），供引擎聚类摘要使用——payload 里是真实失败描述，必须喂给引擎才有料可提。 */
+  listNegativeSamplesDetailed(limit = 1000): readonly { id: number; scope: string; reason: string; payload: string }[] {
+    this.assertOpen()
+    return this.db.prepare(
+      'SELECT id, scope, reason, payload FROM negative_samples ORDER BY id DESC LIMIT ?',
+    ).all(limit) as unknown as readonly { id: number; scope: string; reason: string; payload: string }[]
+  }
 
   /** 按 reason 统计最近 N 天的负样本数。 */
   countNegativeByReason(reason: string, sinceMs: number): number {

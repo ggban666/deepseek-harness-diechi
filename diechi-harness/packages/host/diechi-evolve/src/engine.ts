@@ -66,37 +66,61 @@ export function validateProposals(raw: unknown): Array<{
 }
 
 /** 组装引擎系统提示词（与 Python engine.py 同源）。 */
-export function buildEnginePrompt(clusterSummary: string, maxItems = 3): string {
+export function buildEnginePrompt(
+  clusterSummary: string,
+  maxItems = 3,
+  skillCatalog?: readonly string[],
+): string {
+  const catalogText =
+    skillCatalog && skillCatalog.length > 0
+      ? '\n可用技能清单（系统会把 scope 确定性映射到这些真实技能 id 之一；写 details 时请针对真实技能的内容）：\n- '
+        + skillCatalog.join('\n- ')
+        + '\n'
+      : ''
   return (
-    '你是蝶翅系统的「升级设计者」。读下面的失败场景聚类摘要，' +
+    '你是蝶翅系统的「升级设计者」。读下面的失败场景聚类摘要（含每类失败的具体表现），' +
     '针对每一类提出如何改进现有技能/知识/提示，让同类任务下次一次通过。\n' +
     '要求：\n' +
-    '1. 只输出 JSON 数组，不要任何解释性文字；\n' +
+    '1. 只输出 JSON 数组，不要任何解释性文字，也不要 Markdown 代码块；\n' +
     '2. kind 只能是 patch-skill / add-skill / add-case / add-prompt；\n' +
-    '3. details 写清楚具体改什么（补进技能哪一节、加什么步骤）；\n' +
-    '4. 最多 ' + String(maxItems) + ' 条；宁缺毋滥，没有把握就不提。\n\n' +
-    '聚类摘要：\n' + clusterSummary
+    '3. target 填失败涉及的 scope（从摘要里取，系统会把它确定性映射到真实技能）；id 填 skill:<scope> 或该技能名；\n' +
+    '4. details 必须具体可落地：写明要在该技能的哪一段补什么内容/步骤/检查项，并直接引用摘要里的失败表现；\n' +
+    '5. 至少提出 1 条最稳妥的 patch-skill 提议（针对失败表现补一段方法论/检查清单），最多 ' + String(maxItems) + ' 条；\n' +
+    '6. 不确定时宁可选最低风险的 patch-skill，也绝不要输出空数组 []。\n' +
+    catalogText +
+    '\n聚类摘要：\n' + clusterSummary
   )
 }
 
 /** 调 llama-server 的 /completion。失败抛错，由调用方兜底。 */
-async function completion(prompt: string, maxTokens = 600): Promise<string> {
+async function completion(prompt: string, maxTokens = 400): Promise<string> {
   const url = engineUrl() + '/completion'
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      prompt,
-      n_predict: maxTokens,
-      temperature: 0.2,
-      stop: ['<|im_end|>', '<|endoftext|>'],
-      cache_prompt: true,
-    }),
-    signal: AbortSignal.timeout(180_000),
-  })
-  if (!res.ok) throw new Error(`engine HTTP ${res.status}`)
-  const data = await res.json() as { content?: string }
-  return (data.content ?? '').trim()
+  // 27B 1bit 弱模型约 2-4 tok/s，400 tokens 需 100-200s；超时放宽到 300s 避免被掐断。
+  const doReq = async (): Promise<string> => {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      // 不带 cache_prompt：summary 每次不同、prompt 极短（eval <1s），缓存零收益，
+      // 反而会因 KV 槽复用（f_sim_best=1.000）偶发返回空生成。
+      body: JSON.stringify({
+        prompt,
+        n_predict: maxTokens,
+        temperature: 0.2,
+        stop: ['<|im_end|>', '<|endoftext|>'],
+      }),
+      signal: AbortSignal.timeout(300_000),
+    })
+    if (!res.ok) throw new Error(`engine HTTP ${res.status}`)
+    const data = await res.json() as { content?: string; error?: string }
+    if (typeof data.error === 'string' && data.error) throw new Error(`engine error: ${data.error}`)
+    return (data.content ?? '').trim()
+  }
+  let out = await doReq()
+  // 偶发空响应（llama.cpp 槽复用 bug）兜底：重试一次，再空才如实返回。
+  if (out.length === 0) {
+    out = await doReq()
+  }
+  return out
 }
 
 /** 引擎就绪探测。 */
@@ -113,13 +137,21 @@ export async function isEngineReady(): Promise<boolean> {
  * 读聚类摘要 -> 产出提议草稿（不落库）。
  * 引擎失败返回空数组。调用方自行决定是否落库。
  */
+/**
+ * M5 的 applyScopeResolution / ScopeResolver 已迁到 scope-map.ts（叶子模块），
+ * 由 EvolutionService.propose() 在落库前统一对所有提议路径做确定性改写。
+ * 这里仅做 re-export 维持对外 API 稳定。
+ */
+export { applyScopeResolution, type ScopeResolver } from './scope-map.ts'
+
 export async function generateDrafts(
   clusterSummary: string,
   maxItems = 3,
+  skillCatalog?: readonly string[],
 ): Promise<ProposalDraft[]> {
   let raw: string
   try {
-    raw = await completion(buildEnginePrompt(clusterSummary, maxItems))
+    raw = await completion(buildEnginePrompt(clusterSummary, maxItems, skillCatalog))
   } catch {
     return []
   }
@@ -142,49 +174,58 @@ export async function generateDrafts(
 /**
  * 引擎驱动入口：摘要 -> 提议 -> 落库。
  * 返回落库的提议数。引擎不可用/无有效提议返回 0，不抛错。
+ * M5：target 的 scope→真实技能 改写在 EvolutionService.propose() 内统一完成。
  */
 export async function runEngineAndPropose(
   service: { propose(draft: ProposalDraft): number },
   clusterSummary: string,
   maxItems = 3,
+  skillCatalog?: readonly string[],
 ): Promise<number> {
   if (!clusterSummary.trim()) return 0
   let drafts: ProposalDraft[]
   try {
-    drafts = await generateDrafts(clusterSummary, maxItems)
+    drafts = await generateDrafts(clusterSummary, maxItems, skillCatalog)
   } catch {
     return 0
   }
   let n = 0
   for (const d of drafts) {
     try {
-      service.propose(d)
-      n++
-    } catch {
+      const id = service.propose(d)
+      // id <= 0 表示去重命中（未新增），不计入本轮产出
+      if (id > 0) n++
+    } catch (error) {
+      // eslint-disable-next-line no-console
+      console.error('[diechi-evolve] 单条提议落库失败', error)
       // 单条落库失败不阻断其余
     }
   }
   return n
 }
 
-/** 负样本行（supervisor 提供的最小接口）。 */
+/** 负样本行（supervisor 提供的最小接口；payload 可选——带真实失败描述时引擎才有料可提）。 */
 export interface NegativeSampleLike {
   readonly id: number
   readonly scope: string
   readonly reason: string
+  /** 失败描述文本（负样本的 payload）。引擎路径会从库里读带 payload 的样本。 */
+  readonly payload?: string
 }
 
 /**
  * 把负样本聚合成引擎可读的文本摘要。
- * 按 reason 分组统计，输出每一类的失败频次与涉及 scope，供引擎产出改进提议。
- * 样本太少（< 3）返回空串——引擎没料可吃，宁可不跑。
+ * 按 reason 分组统计，输出每一类的失败频次、涉及 scope，**以及每条失败的具体表现（payload）**——
+ * 这是引擎能提出具体改进的前提。样本太少（< 3）返回空串——引擎没料可吃，宁可不跑。
  */
 export function buildClusterSummary(samples: readonly NegativeSampleLike[]): string {
-  const byReason = new Map<string, { count: number; scopes: Set<string> }>()
+  const byReason = new Map<string, { count: number; scopes: Set<string>; texts: string[] }>()
   for (const s of samples) {
-    const b = byReason.get(s.reason) ?? { count: 0, scopes: new Set<string>() }
+    const b = byReason.get(s.reason) ?? { count: 0, scopes: new Set<string>(), texts: [] }
     b.count += 1
     b.scopes.add(s.scope)
+    const t = (s.payload ?? '').trim()
+    if (t && b.texts.length < 5) b.texts.push(t)
     byReason.set(s.reason, b)
   }
   if (byReason.size === 0) return ''
@@ -192,6 +233,10 @@ export function buildClusterSummary(samples: readonly NegativeSampleLike[]): str
   for (const [reason, b] of byReason) {
     if (b.count < 3) continue
     lines.push(`- 失败原因「${reason}」出现 ${b.count} 次，涉及 scope：${[...b.scopes].join('、')}`)
+    if (b.texts.length) {
+      lines.push('  具体表现：')
+      for (const t of b.texts) lines.push(`    · ${t}`)
+    }
   }
   return lines.join('\n')
 }
