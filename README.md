@@ -43,8 +43,9 @@ The AI will automatically: **clone the repo → install dependencies → launch 
 ## 为什么强大 / Why Powerful
 
 - **以 DSH 为基座**：完整保留 DeepSeek Harness 的 Cordis 插件化架构 —— 标准 / 创造 / 引擎三模式合一，Agent 可读写自身运行所在的 Harness。**Built on DSH**: full Cordis plugin architecture — Standard / Creator / Engine modes in one; the agent can read and write the very harness it runs in.
-- **一键启动**：内置统一启动器，双击即启 —— Web 界面（:3090）与视觉语音服务（:8080）一次拉起，免配置。**One-click launch**: double-click the built-in launcher — Web UI (:3090) and vision/voice (:8080) come up at once, zero config.
+- **一键启动**：内置统一启动器，双击即启 —— Web 界面（:3090）、本地模型懒加载代理（:8081）与视觉语音服务（:8080）一次拉起，免配置。**One-click launch**: double-click the built-in launcher — Web UI (:3090), local-LLM lazy proxy (:8081) and vision/voice (:8080) come up at once, zero config.
 - **本地实时视觉**：MiniCPM-V 本地推理（免费 / 隐私），也可一键切换云端视觉模型。**Local real-time vision**: MiniCPM-V runs locally (free / private), or switch to cloud vision models.
+- **本地大模型对话**：Qwen3.8-27B（IQ1_S 量化）懒加载——不对话时卸载显存，对话时秒级拉起，8GB 显存即可跑到 32768 上下文。**Local LLM chat**: Qwen3.8-27B (IQ1_S) lazy-loads on demand — VRAM is freed when idle, spins up in seconds, 32768 ctx on just 8GB VRAM.
 - **语音对话**：Kokoro 中文 TTS + ASR，可听、可说、可对话。**Voice**: Kokoro Chinese TTS + ASR — it listens, speaks and converses.
 - **平权技能**：一个技能 = 数据库（大脑）+ 能力（工具）+ 人格（提示词），勾选即热装载成完整的人。**Egalitarian skills**: one skill = database (brain) + capability (tools) + persona (prompt); check it and a complete persona hot-loads.
 - **全局大脑**：跨人格实操阅历层，对话自动归纳沉淀，越用越懂你。**Global brain**: cross-persona experience layer; conversations are distilled automatically.
@@ -139,10 +140,11 @@ Claim, not theorem — no sufficiency proof exists yet, and we say so.）
 ### 推荐：统一启动器 / Recommended: Unified Launcher
 双击 `蝶翅APP启动器.cmd`，统一管理：Double-click `蝶翅APP启动器.cmd`:
 - 蝶翅APP基座（3090）
+- 本地模型懒加载代理（8081，`deploy-tools/evolve/engine.py serve-lazy`，按需拉起 Qwen3.8-27B）
 - 视觉语音服务（8080，`deploy-tools/vision-server.py`）
 - 原版 Harness（3080，可选）
 
-最小启动 / Minimal: `deploy-tools/start-diechi.cmd`。
+最小启动 / Minimal: `deploy-tools/start-diechi.cmd`（会自动拉起 8081 懒加载代理 + 3090）。
 
 ### 手动启动 / Manual
 ```bat
@@ -169,9 +171,10 @@ pnpm run build              # 以上全部 / all above
 ## 模型供应商 / Model Providers
 
 - 配置集中在 `diechi-home/settings.yaml` 的 `llm-pi-ai.providers`。Config lives in `diechi-home/settings.yaml` → `llm-pi-ai.providers`.
+- **本地大模型对话**：`Qwen3.8-27B (本地)`，IQ1_S 量化（1-bit），走 `8081` 懒加载代理——空闲自动卸载显存，对话时按需拉起内部 `llama-server`（:18081）。靠 `--parallel 1` + KV cache 量化（q8_0）在 8GB 显存下撑到 32768 上下文。Local chat: Qwen3.8-27B (IQ1_S), served by the 8081 lazy proxy with on-demand GPU unload; 32768 ctx fits 8GB VRAM via `--parallel 1` + q8_0 KV quantization.
 - 视觉：云端 OpenAI 兼容通道（默认 DeepSeek，可换 GLM-4.5V / qwen-vl-max / Kimi）。Vision: cloud OpenAI-compatible channel.
 - 云端：abl、Agnes 等（API Key 走环境变量）。Cloud providers via env API keys.
-- 默认对话模型：`agnes-2.5-flash`。Default chat model: `agnes-2.5-flash`.
+- 默认对话模型：`agnes-2.5-flash`（远程，不依赖本地 8081 是否启动）；想用本地模型时在 Web UI 模型选择器切到「Qwen3.8-27B (本地)」。Default chat model: `agnes-2.5-flash` (remote); switch to the local Qwen3.8 in the model picker.
 
 ## 注意事项 / Notes
 

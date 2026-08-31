@@ -7,16 +7,14 @@
 旧（2026-08-24 fork 时设的）:
 > DeepSeek Harness (DSH) 改版整合版 ｜ 蝶翅APP：一键启动的本地 AI 工作台，MiniCPM-V 实时视觉、Kokoro 语音对话、平权技能、全局大脑 · One-click integrated edition of DeepSeek Harness (DSH)
 
-新（建议替换，2026-08-29 三架构 + watchdog ship 后）:
-> 蝶翅APP · DSH 改版整合版 — 一键启动本地 AI 工作台。三架构基座（被升级者/监督者/升级设计者）+ watchdog 进程级守护，确保任一角色死了其他能接住。集成 MiniCPM-V 实时视觉 + Kokoro 语音 + 平权技能 + 全局大脑。DSH plugin 体系：8 张新表（frozen_rules / authorizations / negative_samples / proposals / role_transitions + 3 个既有）、6 个 model-facing tools、24h 自动 cleanup。90 / 90 测试过。
+最新（2026-09-01 本地 Qwen3.8 对话 + 502 修复后，已通过 API 生效）:
+> 蝶翅APP · DSH 改版整合版 — 一键启动本地 AI 工作台。本地 Qwen3.8-27B 大模型对话（懒加载 + KV 量化，8GB 显存跑 32K 上下文）+ MiniCPM-V 实时视觉 + Kokoro 语音 + 平权技能 + 全局大脑。三架构自进化基座（被升级者/监督者/升级设计者）+ watchdog 进程级守护，升级必留痕、坏补丁自动降级。
 
-## Topics（已有，无需改）
+## Topics（已生效，2026-09-01 共 15 个）
 
-`ai-agent` `ai-assistant` `computer-vision` `cordis` `deepseek-harness` `dsh` `dsh-web` `local-llm` `skill-market` `tts`
+`ai-agent` `ai-assistant` `computer-vision` `cordis` `deepseek-harness` `dsh` `dsh-web` `local-llm` `llama-cpp` `process-watchdog` `qwen` `self-evolving-agent` `skill-market` `three-architecture` `tts`
 
-可加（10 个以内）:
-- `three-architecture` 或 `self-evolving-agent` （三架构主张）
-- `process-watchdog` （进程级守护）
+（较 08-29 新增 `llama-cpp`、`qwen`，对应本地 Qwen3.8 大模型对话能力）
 
 ## Website
 
