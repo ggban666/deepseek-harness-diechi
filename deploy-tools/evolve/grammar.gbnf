@@ -1,4 +1,4 @@
-# GBEF (GBNF) —— 进化引擎输出语法约束。
+# GBNF —— 进化引擎输出语法约束。
 #
 # 为什么需要它：M4 用的是 Qwen3.8-27B 的 UD-IQ1_S（1bit 量化）。1bit 崩的是
 # **内容质量**，不是格式——但只要格式一崩，下游解析就会抛异常，整条进化链断掉，
@@ -15,20 +15,12 @@
 # kind 刻意只允许建设性类型——**引擎永远不能提议 add-rule（冻结）**。
 # 老系统唯一的提议类型就是冻结，结果"崩溃越多→冻结越多→系统越瘫"。
 # 这条限制在语法层面写死，弱模型就算发疯也吐不出 add-rule。
+#
+# 注意：规则必须单行定义。llama.cpp (>=b10712) 的 GBNF 解析器对跨行规则会
+# 报 failed to parse grammar，必须写成一行。
 
 root ::= ws "[" ws ( proposal ( ws "," ws proposal )* )? ws "]" ws
-
-proposal ::= "{" ws
-  "\"kind\"" ws ":" ws kind ws "," ws
-  "\"target\"" ws ":" ws string ws "," ws
-  "\"id\"" ws ":" ws string ws "," ws
-  "\"details\"" ws ":" ws string ws "," ws
-  "\"rationale\"" ws ":" ws string
-ws "}"
-
-# 建设性类型白名单：只改技能/知识/提示，绝不冻结行为、绝不碰代码。
+proposal ::= "{" ws "\"kind\"" ws ":" ws kind ws "," ws "\"target\"" ws ":" ws string ws "," ws "\"id\"" ws ":" ws string ws "," ws "\"details\"" ws ":" ws string ws "," ws "\"rationale\"" ws ":" ws string ws "}"
 kind ::= "\"patch-skill\"" | "\"add-skill\"" | "\"add-case\"" | "\"add-prompt\""
-
 string ::= "\"" ( [^"\\] | "\\" ["\\/bfnrt] )* "\""
-
 ws ::= [ \t\n\r]*

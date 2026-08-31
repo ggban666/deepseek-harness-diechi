@@ -61,10 +61,28 @@ def start_engine(model_path, port=8081, ctx=4096, grammar=None, ngl=0):
     cmd = [exe, "--model", model_path, "--port", str(port), "--host", "127.0.0.1",
            "--ctx-size", str(ctx), "--seed", "42", "--temp", "0.2", "-ngl", str(ngl)]
     if grammar:
+        # grammar 是相对路径时转绝对，避免受 cwd 影响
+        if not os.path.isabs(grammar):
+            grammar = os.path.join(os.path.dirname(__file__), grammar)
+        # 中文路径坑：llama.cpp 在 Windows 下用 std::ifstream 读 grammar，
+        # 中文目录会报 failed to open file。复制到 ASCII 临时目录再传。
+        if any(ord(c) > 127 for c in grammar):
+            ascii_dir = os.path.join(os.environ.get("TEMP", r"C:\temp"), "evolve-grammar")
+            os.makedirs(ascii_dir, exist_ok=True)
+            ascii_g = os.path.join(ascii_dir, os.path.basename(grammar))
+            import shutil
+            try:
+                shutil.copy2(grammar, ascii_g)
+                _log("grammar 含中文路径，复制到 ASCII 目录: %s" % ascii_g)
+                grammar = ascii_g
+            except Exception as e:
+                _log("grammar 复制到 ASCII 目录失败(%s)，按原路径尝试" % e)
         cmd += ["--grammar-file", grammar]
     logf = open(os.path.join(os.path.dirname(__file__), "llama-server.log"), "ab")
     _log("启动 llama-server: %s" % " ".join(cmd))
-    _SERVER_PROC = subprocess.Popen(cmd, stdout=logf, stderr=subprocess.STDOUT)
+    # 必须设置 cwd 为 exe 所在目录：CUDA 版依赖同目录的 ggml-cuda.dll 等，
+    # Windows 按当前目录搜索 DLL，cwd 不对会报 STATUS_ENTRYPOINT_NOT_FOUND 退出。
+    _SERVER_PROC = subprocess.Popen(cmd, cwd=os.path.dirname(exe), stdout=logf, stderr=subprocess.STDOUT)
     _LLAMA_SERVER = port
     # 等待就绪
     for _ in range(120):
@@ -167,6 +185,7 @@ def _main():
     ap.add_argument("--port", type=int, default=8081)
     ap.add_argument("--grammar", default=os.path.join(os.path.dirname(__file__), "grammar.gbnf"))
     ap.add_argument("--ctx", type=int, default=4096)
+    ap.add_argument("--ngl", type=int, default=0, help="GPU 层数，-1=全部/99=全部，0=纯 CPU。RTX 4070 建议 99")
     ap.add_argument("--summary", default="")
     ap.add_argument("--max", type=int, default=3)
     args = ap.parse_args()
@@ -175,7 +194,7 @@ def _main():
         if not args.model:
             print("serve 模式需要 --model", file=sys.stderr)
             sys.exit(2)
-        start_engine(args.model, args.port, args.ctx, args.grammar)
+        start_engine(args.model, args.port, args.ctx, args.grammar, ngl=args.ngl)
         _log("引擎就绪，端口 %d。Ctrl+C 退出。" % args.port)
         try:
             while True:

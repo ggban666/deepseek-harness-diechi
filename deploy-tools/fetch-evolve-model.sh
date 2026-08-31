@@ -6,9 +6,11 @@ URL="https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/resolve/main/Qwen3.8-27B-UD
 OUT="/d/桌面/振翅科技/models/Qwen3.8-27B-UD-IQ1_S/Qwen3.8-27B-UD-IQ1_S.gguf"
 
 mkdir -p "$(dirname "$OUT")"
-for i in $(seq 1 200); do
+# 注意：只允许一个下载进程写 OUT（多进程 curl -C - 并发写会污染文件，导致 GGUF 损坏）
+for i in $(seq 1 1000); do
   size=$(stat -c %s "$OUT" 2>/dev/null || echo 0)
-  curl -sS -L -C - --connect-timeout 20 --speed-time 60 --speed-limit 1024 \
+  # -C - 断点续传；speed-limit 放宽到 512B/s 避免带宽波动被误判为死连
+  curl -sS -L -C - --connect-timeout 20 --speed-time 90 --speed-limit 512 --retry 3 --retry-delay 5 \
     -x "$PROXY" "$URL" >> "$OUT" 2>/dev/null
   rc=$?
   new=$(stat -c %s "$OUT" 2>/dev/null || echo 0)
