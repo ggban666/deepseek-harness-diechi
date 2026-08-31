@@ -6,8 +6,8 @@
 定位与铁律：
   1. **只做提议器，不做验证器。** 引擎负责"读聚类摘要 -> 产出 patch-skill 等提议"。
      提议好坏由 golden set（CBS）回归 + 人工 review 双门裁决，引擎自己永远不能判自己。
-  2. **纯 CPU，空闲调度。** 不进主对话延迟路径，不在推理进行时抢 GPU/CPU。
-     调用方（host 定时器 / RPC）在空闲窗口才调 propose()。
+  2. **GPU 推理，空闲调度。** RTX 4070 上 -ngl 99 全层 offload（视觉服务占 2.1GB 后仍够用）。
+     不进主对话延迟路径，调用方（host 定时器 / RPC）在空闲窗口才调 propose()。
   3. **GBNF 保格式，任务收窄保内容。** 1bit 量化崩内容不崩格式；GBNF 把"格式必须合法"
      从模型能力里拿走，解码器保证 JSON 结构，模型只剩"填什么"这一件事。
   4. **只能提议建设性动作。** grammar.gbnf 的 kind 白名单里没有 add-rule——弱模型就算
@@ -40,7 +40,7 @@ def _log(msg):
 
 
 def find_llama_server():
-    """定位 llama-server.exe（优先 llama.cpp CPU 版）。"""
+    """定位 llama-server.exe（models/llama.cpp 现为 CUDA 版，CPU 版备份在 llama.cpp-cpu-bak）。"""
     candidates = [
         os.environ.get("LLAMA_SERVER"),
         r"D:\桌面\振翅科技\models\llama.cpp\llama-server.exe",
@@ -53,7 +53,7 @@ def find_llama_server():
 
 
 def start_engine(model_path, port=8081, ctx=4096, grammar=None, ngl=0):
-    """后台拉起 llama-server。返回 Popen。ngl=0 即纯 CPU。"""
+    """后台拉起 llama-server。返回 Popen。ngl=99 全层 GPU，0=纯 CPU 兜底。"""
     global _SERVER_PROC, _LLAMA_SERVER
     if _SERVER_PROC is not None and _SERVER_PROC.poll() is None:
         return _SERVER_PROC
