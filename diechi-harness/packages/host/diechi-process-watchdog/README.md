@@ -26,7 +26,7 @@
 ## 启动
 
 ```bat
-D:\桌面\振翅科技\蝶翅-app\start-watchdog.cmd
+D:\桌面\振翅科技\蝶翅-app\deploy-tools\start-watchdog.cmd
 ```
 
 或手动：

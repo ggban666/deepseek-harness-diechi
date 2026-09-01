@@ -12,8 +12,8 @@ rem
 rem  停止：直接关窗口，或 Ctrl+C（不会杀掉已拉起的 DSH）。
 rem ============================================================
 
-rem 以本脚本所在目录（蝶翅-app 根目录）为基准
-set "APP_ROOT=%~dp0"
+rem 以项目根目录（蝶翅-app，本脚本上一级）为基准
+set "APP_ROOT=%~dp0..\"
 set "DSH_HOME=%APP_ROOT%diechi-home"
 set "DIECHI_HARNESS_PATH=%APP_ROOT%diechi-harness"
 set "NODE_EXE=%APP_ROOT%vendor\node\node.exe"

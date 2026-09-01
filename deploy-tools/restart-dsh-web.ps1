@@ -1,9 +1,9 @@
 # 蝶翅 dsh web 重启脚本：杀掉旧宿主进程，重新启动加载最新 lib。
 # 由独立 PowerShell 进程执行，不依赖宿主自身的 job 管理。
-# 路径以本脚本所在目录（蝶翅-app 根目录）为基准，保持项目自包含。
+# 路径以项目根目录（蝶翅-app，本脚本上一级）为基准，保持项目自包含。
 $ErrorActionPreference = 'Continue'
 
-$appRoot = $PSScriptRoot
+$appRoot = Split-Path -Parent $PSScriptRoot
 if ([string]::IsNullOrEmpty($appRoot)) { $appRoot = (Get-Location).Path }
 
 $harness = Join-Path $appRoot 'diechi-harness'

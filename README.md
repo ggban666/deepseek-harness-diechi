@@ -129,9 +129,17 @@ Claim, not theorem — no sufficiency proof exists yet, and we say so.）
 │   │   └── diechi-brain/        # 全局大脑（实操阅历层）/ global brain
 │   └── packages/bundle/web-app/ # web 表层 bundle
 ├── diechi-home/             # 数据目录（$DSH_HOME）/ data dir
-├── deploy-tools/            # 启动器、vision-server.py、check-health.ps1
-├── docs/                    # 项目文档 / docs
-├── 蝶翅APP启动器.cmd        # 统一启动管理器 / unified launcher
+├── deploy-tools/            # 启动器、vision/语音、evolve 引擎、健康自检 / launcher, vision/voice, evolve engine, health check
+│   ├── start-diechi.cmd         # 主启动脚本（8081 懒加载代理 + 3090）/ main launch script
+│   ├── start-evolve-engine.cmd  # M4 进化引擎（Qwen3.8 + GBNF，非 lazy）/ evolve engine
+│   ├── start-watchdog.cmd       # watchdog 独立进程启动器 / watchdog process
+│   ├── restart-dsh-web.ps1      # dsh web 重启脚本 / web restart
+│   ├── vision/                  # 视觉语音服务 / vision & voice
+│   ├── evolve/                  # 进化引擎（engine.py / grammar.gbnf）/ evolve engine
+│   └── check-health.ps1         # 健康自检 / health check
+├── docs/                    # 项目文档（含 docs/归档/ 历史部署文档）/ docs (incl. archived)
+├── setup-vendor.cmd         # 环境准备：创建 vendor/ 与 models/ junction / env setup
+├── 蝶翅APP启动器.cmd        # 命令行启动器（推荐用 蝶翅APP启动器.exe）/ CLI launcher
 └── README.md
 ```
 

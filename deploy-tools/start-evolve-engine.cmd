@@ -11,9 +11,9 @@ rem
 rem  停止：直接关窗口，或 Ctrl+C。
 rem ============================================================
 
-rem 以本脚本所在目录（蝶翅-app 根目录）为基准
-set "APP_ROOT=%~dp0"
-set "EVOLVE_DIR=%APP_ROOT%deploy-tools\evolve"
+rem 以项目根目录（蝶翅-app，本脚本上一级）为基准
+set "APP_ROOT=%~dp0..\"
+set "EVOLVE_DIR=%~dp0evolve"
 set "EVOLVE_MODEL=%APP_ROOT%models\Qwen3.8-27B-UD-IQ1_S\Qwen3.8-27B-UD-IQ1_S.gguf"
 set "PYTHON_EXE=%APP_ROOT%vendor\python\python.exe"
 

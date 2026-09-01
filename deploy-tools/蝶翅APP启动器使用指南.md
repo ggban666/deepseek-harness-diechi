@@ -14,7 +14,7 @@
 ## 环境要求
 
 - Windows 10/11 x64
-- [.NET 8 Windows Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0)（框架依赖版本，首次使用需安装一次）
+- 无需安装 .NET 运行时（exe 为单文件自包含发布，已内嵌 .NET 9）
 - Node.js 22+ 和 Python 3.13+（本项目通过 `vendor/node` 和 `vendor/python` 目录 junction 引用，保持运行依赖在 `蝶翅-app` 文件夹内）
 - 已正确放置模型文件：`models/Qwen3.8-27B-UD-IQ1_S/Qwen3.8-27B-UD-IQ1_S.gguf`（项目根目录的 `models/` 会被链接到 `蝶翅-app/models/`）
 
@@ -56,7 +56,7 @@ dotnet build DiechiLauncher.csproj -c Release -o ..
 
 ### 提示需要安装 .NET
 
-下载并安装 [.NET 8 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/8.0)（选择 **Desktop Runtime**）。
+当前版本为单文件自包含发布（`net9.0-windows` + `SelfContained`），正常情况下**无需安装**任何 .NET 运行时。若仍提示缺少运行时，说明 exe 是旧版框架依赖产物——请用下方「从源码编译」重新生成自包含版。
 
 ### 启动后 3090 无法访问
 
